@@ -12,19 +12,19 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
-_ROOT = Path(__file__).resolve().parent.parent
+_ROOT = Path(__file__).resolve().parent.parent.parent
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
 import numpy as np
 import pandas as pd
 
-from data import ebauche as mod_ebauche
-from data import filage as mod_filage
-from data import formage as mod_formage
-from data.config import CONFIG
-from data.filage import FilageState
-from data.formage import FormageState
+from core.data import ebauche as mod_ebauche
+from core.data import filage as mod_filage
+from core.data import formage as mod_formage
+from core.data.config import CONFIG
+from core.data.filage import FilageState
+from core.data.formage import FormageState
 
 DATA_DIR = Path(__file__).resolve().parent
 

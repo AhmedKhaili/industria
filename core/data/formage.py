@@ -17,11 +17,11 @@ from typing import Deque
 import numpy as np
 import pandas as pd
 
-_ROOT = Path(__file__).resolve().parent.parent
+_ROOT = Path(__file__).resolve().parent.parent.parent
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
-from data.config import CONFIG
+from core.data.config import CONFIG
 
 INTERVAL_S = 5
 ANOMALY_START_PROB = 0.05
