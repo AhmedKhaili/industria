@@ -147,33 +147,41 @@ class RegressionSpecialist(BaseSpecialist):
 
             n_obs = len(y_multi)
             n_params = design_matrix.shape[1]
-            if n_obs > n_params:
-                sigma2 = ss_res / (n_obs - n_params)
-                cov_beta = sigma2 * np.linalg.inv(design_matrix.T @ design_matrix)
-                std_errors = np.sqrt(np.diag(cov_beta))
-                t_values = coefficients / std_errors
-                p_values = 2 * (1 - stats.t.cdf(np.abs(t_values), df=n_obs - n_params))
+            try:
+                if n_obs > n_params:
+                    sigma2 = ss_res / (n_obs - n_params)
+                    cov_beta = sigma2 * np.linalg.inv(design_matrix.T @ design_matrix)
+                    std_errors = np.sqrt(np.diag(cov_beta))
+                    t_values = coefficients / std_errors
+                    p_values = 2 * (
+                        1 - stats.t.cdf(np.abs(t_values), df=n_obs - n_params)
+                    )
+                else:
+                    std_errors = np.full_like(coefficients, np.nan, dtype=float)
+                    p_values = np.full_like(coefficients, np.nan, dtype=float)
+            except np.linalg.LinAlgError:
+                logger.warning(
+                    "Regression multiple ignoree: matrice singuliere pour %s",
+                    target_column,
+                )
             else:
-                std_errors = np.full_like(coefficients, np.nan, dtype=float)
-                p_values = np.full_like(coefficients, np.nan, dtype=float)
+                coefficients_payload = []
+                for idx, column in enumerate(["intercept"] + x_cols):
+                    coef_value = float(coefficients[idx])
+                    p_value = float(p_values[idx]) if not np.isnan(p_values[idx]) else None
+                    coefficients_payload.append({
+                        "variable": column,
+                        "coefficient": round(coef_value, 4),
+                        "p_value": round(p_value, 4) if p_value is not None else None,
+                        "significative": bool(p_value < 0.05) if p_value is not None else False,
+                    })
 
-            coefficients_payload = []
-            for idx, column in enumerate(["intercept"] + x_cols):
-                coef_value = float(coefficients[idx])
-                p_value = float(p_values[idx]) if not np.isnan(p_values[idx]) else None
-                coefficients_payload.append({
-                    "variable": column,
-                    "coefficient": round(coef_value, 4),
-                    "p_value": round(p_value, 4) if p_value is not None else None,
-                    "significative": bool(p_value < 0.05) if p_value is not None else False,
-                })
-
-            regression_multiple = {
-                "variables": x_cols,
-                "n": n_obs,
-                "r_squared": round(float(r_squared_multi), 4),
-                "coefficients": coefficients_payload,
-            }
+                regression_multiple = {
+                    "variables": x_cols,
+                    "n": n_obs,
+                    "r_squared": round(float(r_squared_multi), 4),
+                    "coefficients": coefficients_payload,
+                }
 
         logger.info(
             "Regression calculee pour %s avec %s variables explicatives",

@@ -77,7 +77,15 @@ class SpcSpecialist(BaseSpecialist):
                 "subgroup_size=%s hors plage, ajuste a %s", subgroup_size, n
             )
 
-        series = pd.to_numeric(df[target_column], errors="coerce").dropna()
+        numeric_df = df.select_dtypes(include=[np.number]).copy()
+        if target_column not in numeric_df.columns:
+            raise ValueError(
+                f"Colonne cible non numerique exploitable pour SPC: {target_column}"
+            )
+
+        series = pd.to_numeric(
+            numeric_df[target_column], errors="coerce"
+        ).dropna()
         mean_global = float(series.mean())
         std_global = float(series.std(ddof=1))
 

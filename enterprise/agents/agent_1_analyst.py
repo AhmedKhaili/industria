@@ -183,6 +183,28 @@ class AnalystAgent:
             "  utiles pour répondre + timestamp\n"
             "- time_filter_hours = null si pas de\n"
             "  filtre temps dans la question\n\n"
+            "Si la question parle de comparer\n"
+            "ou de différences entre groupes :\n"
+            "  → inclure une colonne catégorielle\n"
+            "    (modele, piece_id, type, categorie)\n"
+            "    dans relevant_columns\n"
+            "  → filters.group_filter_column = cette colonne\n"
+            "  → NE PAS laisser group_filter_column à null\n"
+            "  → privilégier les tables qui ont modele\n"
+            "    (filage_data, formage_data)\n\n"
+            "EXEMPLE :\n"
+            "Question: 'Compare les différents modèles'\n"
+            "Réponse:\n"
+            "{\n"
+            "  'relevant_tables': ['filage_data'],\n"
+            "  'relevant_columns': ['timestamp', 'modele', 'inducteur_1'],\n"
+            "  'target_column': 'inducteur_1',\n"
+            "  'filters': {\n"
+            "    'time_filter_hours': null,\n"
+            "    'group_filter_column': 'modele',\n"
+            "    'group_filter_value': null\n"
+            "  }\n"
+            "}\n\n"
             "Réponds UNIQUEMENT avec le JSON.\n"
             "Pas de markdown. Pas d'explication.\n"
             "Pas de texte avant ou après le JSON."
@@ -259,10 +281,39 @@ class AnalystAgent:
                 logger.warning("Failed to decode Ollama JSON response")
                 return None
 
+    def _is_comparison_question(self, question: str) -> bool:
+        """Return True when the user question asks for group comparison."""
+        lowered = question.lower()
+        return any(
+            keyword in lowered
+            for keyword in (
+                "compar",
+                "différen",
+                "differen",
+                "groupe",
+                "modèle",
+                "modele",
+            )
+        )
+
+    def _infer_group_filter_column(
+        self,
+        relevant_tables: list[str],
+        schema: dict,
+    ) -> str | None:
+        """Pick a categorical column for group comparisons from the schema."""
+        for table_name in relevant_tables:
+            columns = schema.get(table_name, {}).get("columns", {})
+            for preferred in ("modele", "categorie", "type", "piece_id"):
+                if preferred in columns:
+                    return preferred
+        return None
+
     def _validate_output(
         self,
         output: dict,
         schema: dict,
+        question: str = "",
     ) -> dict:
         """
         Validate and normalize LLM output using Python-only checks.
@@ -307,15 +358,6 @@ class AnalystAgent:
             "float",
             "integer",
         }
-        excluded_target_types = {
-            "boolean",
-            "text",
-            "varchar",
-            "character varying",
-            "timestamp",
-            "timestamp without time zone",
-            "timestamp with time zone",
-        }
 
         target_column = output.get("target_column")
         target_is_valid = False
@@ -323,11 +365,7 @@ class AnalystAgent:
             for table_name in relevant_tables:
                 table_columns = schema[table_name].get("columns", {})
                 data_type = str(table_columns.get(target_column, "")).lower()
-                if (
-                    target_column in table_columns
-                    and data_type in numeric_types
-                    and data_type not in excluded_target_types
-                ):
+                if target_column in table_columns and data_type in numeric_types:
                     target_is_valid = True
                     break
 
@@ -336,10 +374,7 @@ class AnalystAgent:
             for table_name in relevant_tables:
                 for column_name, data_type in schema[table_name].get("columns", {}).items():
                     data_type_l = str(data_type).lower()
-                    if (
-                        data_type_l in numeric_types
-                        and data_type_l not in excluded_target_types
-                    ):
+                    if data_type_l in numeric_types:
                         target_column = column_name
                         break
                 if target_column:
@@ -359,6 +394,36 @@ class AnalystAgent:
         group_filter_value = filters.get("group_filter_value")
         if group_filter_column is None:
             group_filter_value = None
+
+        if question and self._is_comparison_question(question):
+            modele_tables = [
+                table_name
+                for table_name, table_info in schema.items()
+                if "modele" in table_info.get("columns", {})
+            ]
+            if modele_tables and modele_tables[0] not in relevant_tables:
+                relevant_tables = [modele_tables[0], *relevant_tables[:2]]
+
+            allowed_columns = set()
+            timestamp_exists = False
+            for table_name in relevant_tables:
+                for column_name in schema[table_name].get("columns", {}):
+                    allowed_columns.add(column_name)
+                    if column_name == "timestamp":
+                        timestamp_exists = True
+
+            if group_filter_column is None:
+                group_filter_column = self._infer_group_filter_column(
+                    relevant_tables,
+                    schema,
+                )
+
+        if (
+            group_filter_column
+            and group_filter_column not in relevant_columns
+            and group_filter_column in allowed_columns
+        ):
+            relevant_columns.append(group_filter_column)
 
         if target_column and target_column not in relevant_columns:
             relevant_columns.append(target_column)
@@ -409,7 +474,7 @@ class AnalystAgent:
                     continue
                 if output is None:
                     continue
-                candidate = self._validate_output(output, schema)
+                candidate = self._validate_output(output, schema, question)
                 if candidate.get("relevant_tables") and candidate.get("target_column") is not None:
                     validated = candidate
                     break

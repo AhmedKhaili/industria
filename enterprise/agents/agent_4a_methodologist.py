@@ -90,6 +90,19 @@ class MethodologistAgent:
             "{'goal':'comparaison_groupes',\n"
             " 'target_col':'lvdt_moyenne',\n"
             " 'group_col':'modele','time_aware':false}\n\n"
+            "Si la question parle de comparer\n"
+            "ou de différences entre groupes :\n"
+            "  → group_col = colonne catégorielle\n"
+            "    (modele, piece_id, type, categorie)\n"
+            "    présente dans Colonnes disponibles\n"
+            "  → NE PAS mettre group_col à null\n\n"
+            "EXEMPLE :\n"
+            "Question: 'Compare les différents modèles'\n"
+            "Réponse:\n"
+            "{'goal':'comparaison_groupes',\n"
+            " 'target_col':'inducteur_1',\n"
+            " 'group_col':'modele',\n"
+            " 'time_aware':false}\n\n"
             "Réponds UNIQUEMENT avec le JSON.\n"
             "Pas de markdown. Pas d'explication."
         )
@@ -170,13 +183,36 @@ class MethodologistAgent:
                 return column
         return ""
 
-    def _validate_output(self, output: dict, columns: list[str]) -> dict:
+    def _is_comparison_question(self, question: str) -> bool:
+        """Return True when the user question asks for group comparison."""
+        lowered = question.lower()
+        return any(
+            keyword in lowered
+            for keyword in (
+                "compar",
+                "différen",
+                "differen",
+                "groupe",
+                "modèle",
+                "modele",
+            )
+        )
+
+    def _validate_output(
+        self,
+        output: dict,
+        columns: list[str],
+        question: str = "",
+        state_filters: dict | None = None,
+    ) -> dict:
         """
         Validate and normalize the LLM output with Python-only rules.
 
         Args:
             output: Raw LLM dictionary.
             columns: Available column names.
+            question: Original user question for deterministic fallbacks.
+            state_filters: Analyst filters payload from shared state.
 
         Returns:
             dict: Normalized intention payload.
@@ -185,6 +221,9 @@ class MethodologistAgent:
         if not isinstance(goal, str) or goal not in self._valid_goals:
             goal = "resume"
 
+        if goal == "resume" and question and self._is_comparison_question(question):
+            goal = "comparaison_groupes"
+
         target_col = output.get("target_col", "")
         if not isinstance(target_col, str) or target_col not in columns:
             target_col = self._pick_default_target_column(columns)
@@ -192,6 +231,17 @@ class MethodologistAgent:
         group_col = output.get("group_col")
         if not isinstance(group_col, str) or group_col not in columns:
             group_col = None
+
+        if group_col is None and goal == "comparaison_groupes":
+            if isinstance(state_filters, dict):
+                group_hint = state_filters.get("group_filter_column")
+                if isinstance(group_hint, str) and group_hint in columns:
+                    group_col = group_hint
+            if group_col is None:
+                for preferred in ("modele", "categorie", "type", "piece_id"):
+                    if preferred in columns:
+                        group_col = preferred
+                        break
 
         time_aware = output.get("time_aware")
         if not isinstance(time_aware, bool):
@@ -243,14 +293,41 @@ class MethodologistAgent:
                     attempt_errors.append(str(exc))
                     continue
                 if output:
-                    validated = self._validate_output(output, columns)
+                    state_filters = (
+                        state.get("filters", {})
+                        if isinstance(state, dict)
+                        else {}
+                    )
+                    validated = self._validate_output(
+                        output,
+                        columns,
+                        question,
+                        state_filters,
+                    )
                     break
 
             if validated is None:
+                fallback_goal = (
+                    "comparaison_groupes"
+                    if self._is_comparison_question(question)
+                    else "resume"
+                )
+                group_col = None
+                if isinstance(state, dict):
+                    filters = state.get("filters", {})
+                    if isinstance(filters, dict):
+                        group_hint = filters.get("group_filter_column")
+                        if isinstance(group_hint, str) and group_hint in columns:
+                            group_col = group_hint
+                if group_col is None and fallback_goal == "comparaison_groupes":
+                    for preferred in ("modele", "categorie", "type", "piece_id"):
+                        if preferred in columns:
+                            group_col = preferred
+                            break
                 validated = {
-                    "goal": "resume",
-                    "target_col": columns[0] if columns else "",
-                    "group_col": None,
+                    "goal": fallback_goal,
+                    "target_col": self._pick_default_target_column(columns),
+                    "group_col": group_col,
                     "time_aware": False,
                 }
                 if isinstance(state, dict) and attempt_errors:

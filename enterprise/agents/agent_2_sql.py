@@ -13,6 +13,25 @@ from tenacity import retry, stop_after_attempt, \
 
 logger = logging.getLogger(__name__)
 
+_NUMERIC_SQL_TYPES = frozenset({
+    "integer",
+    "bigint",
+    "smallint",
+    "numeric",
+    "real",
+    "double precision",
+    "decimal",
+})
+_MIN_ANALYSIS_ROWS = 5
+_SKIP_METRIC_COLUMNS = frozenset({
+    "timestamp",
+    "piece_id",
+    "id",
+    "row_id",
+    "anomalie",
+    "score_anomalie",
+})
+
 
 class SQLAgent:
     """Generic SQL engine for IndustrIA using live schema, Ollama, and strict SQL validation."""
@@ -35,6 +54,63 @@ class SQLAgent:
             "password": "industria123",
             "options": "-c default_transaction_read_only=on",
         }
+
+    def _is_timestamp_projection(self, expression) -> bool:
+        """
+        Check whether a SELECT projection is a raw `timestamp` column.
+
+        Args:
+            expression: sqlglot expression from the SELECT list.
+
+        Returns:
+            bool: True when the projection is a direct timestamp column.
+        """
+        base_expression = expression.this if hasattr(expression, "this") and expression.__class__.__name__ == "Alias" else expression
+        if not isinstance(base_expression, sqlglot.exp.Column):
+            return False
+        return str(base_expression.name).lower() == "timestamp"
+
+    def _remove_timestamp_from_aggregate_select(self, statement):
+        """
+        Remove raw timestamp from aggregate SELECT queries without GROUP BY.
+
+        Args:
+            statement: Parsed sqlglot statement.
+
+        Returns:
+            sqlglot expression: Possibly adjusted statement.
+        """
+        if not isinstance(statement, sqlglot.exp.Select):
+            return statement
+
+        statement_sql = statement.sql(dialect="postgres")
+        has_aggregate = re.search(
+            r"\b(?:AVG|SUM|COUNT|MIN|MAX)\s*\(",
+            statement_sql,
+            re.IGNORECASE,
+        )
+        has_group_by = statement.args.get("group") is not None
+        if not has_aggregate or has_group_by:
+            return statement
+
+        projections = list(statement.expressions or [])
+        if not projections:
+            return statement
+
+        filtered_projections = [
+            expression
+            for expression in projections
+            if not self._is_timestamp_projection(expression)
+        ]
+        if len(filtered_projections) == len(projections) or not filtered_projections:
+            return statement
+
+        logger.warning(
+            "Timestamp retire du SELECT agrege sans GROUP BY pour SQL invalide"
+        )
+        adjusted_statement = statement.copy()
+        adjusted_statement.set("expressions", filtered_projections)
+        return adjusted_statement
 
     def _load_schema_from_db(self) -> dict:
         """
@@ -84,6 +160,95 @@ class SQLAgent:
             if conn is not None:
                 conn.close()
 
+    def _pick_metric_column(
+        self,
+        table: str,
+        target_column: str,
+        schema: dict,
+    ) -> str | None:
+        """
+        Pick a numeric metric column for deterministic series fallback SQL.
+
+        Args:
+            table: Table name.
+            target_column: Preferred metric from analyst state.
+            schema: Reduced schema payload keyed by table name.
+
+        Returns:
+            str | None: Column name when found.
+        """
+        table_info = schema.get(table) or {}
+        columns = table_info.get("columns", {})
+
+        if (
+            target_column
+            and target_column in columns
+            and str(columns[target_column]).lower() in _NUMERIC_SQL_TYPES
+        ):
+            return target_column
+
+        for column_name, data_type in columns.items():
+            if column_name in _SKIP_METRIC_COLUMNS:
+                continue
+            if str(data_type).lower() in _NUMERIC_SQL_TYPES:
+                return column_name
+
+        return None
+
+    def _build_series_fallback_sql(
+        self,
+        tables: list[str],
+        target_column: str,
+        schema: dict,
+        group_column: str | None = None,
+    ) -> str:
+        """
+        Build a simple time-series query when LLM SQL returns too few rows.
+
+        Args:
+            tables: Candidate tables from analyst state.
+            target_column: Preferred metric column.
+            schema: Reduced schema payload keyed by table name.
+
+        Returns:
+            str: Read-only SELECT with ORDER BY timestamp and LIMIT.
+        """
+        table = tables[0] if tables else next(iter(schema.keys()), "")
+        if group_column:
+            for candidate_table in tables:
+                candidate_columns = (schema.get(candidate_table) or {}).get(
+                    "columns",
+                    {},
+                )
+                if group_column in candidate_columns:
+                    table = candidate_table
+                    break
+        table_sql = self._safe_identifier(table)
+        metric = self._pick_metric_column(table, target_column, schema)
+        table_columns = (schema.get(table) or {}).get("columns", {})
+
+        select_parts = ["timestamp"]
+        if (
+            group_column
+            and group_column in table_columns
+            and group_column != "timestamp"
+        ):
+            select_parts.append(self._safe_identifier(group_column))
+        if metric:
+            select_parts.append(self._safe_identifier(metric))
+
+        if len(select_parts) > 1:
+            return (
+                f"SELECT {', '.join(select_parts)} "
+                f"FROM {table_sql} "
+                "ORDER BY timestamp ASC LIMIT 500"
+            )
+
+        return (
+            f"SELECT * FROM {table_sql} "
+            "ORDER BY timestamp ASC LIMIT 500"
+        )
+
     def _safe_identifier(self, name: str) -> str:
         """
         Return a safely quoted SQL identifier.
@@ -121,6 +286,11 @@ class SQLAgent:
         """
         schema_json = json.dumps(schema, ensure_ascii=False, indent=2)
         time_filter_hours = filters.get("time_filter_hours") if isinstance(filters, dict) else None
+        group_filter_column = (
+            filters.get("group_filter_column")
+            if isinstance(filters, dict)
+            else None
+        )
 
         system_prompt = (
             "Tu es un expert SQL TimescaleDB.\n"
@@ -131,9 +301,24 @@ class SQLAgent:
             "- Toujours ORDER BY timestamp ASC\n"
             "- Ne jamais générer INSERT/UPDATE/DELETE/\n"
             "  DROP/ALTER/CREATE/TRUNCATE\n"
-            "- Utiliser time_bucket() pour les\n"
-            "  agrégations temporelles TimescaleDB\n"
             "- Pas de sous-requêtes complexes\n\n"
+            "RÈGLES SQL OBLIGATOIRES :\n\n"
+            "1. INTERDIT : UNION, UNION ALL\n"
+            "   entre tables différentes\n\n"
+            "2. Pour agrégation temporelle\n"
+            "   utiliser EXACTEMENT :\n"
+            "   time_bucket('1 hour', timestamp)\n"
+            "   PAS TIME_BUCKET('hour', timestamp)\n\n"
+            "3. Si AVG/SUM/MIN/MAX dans SELECT ->\n"
+            "   GROUP BY obligatoire sur toutes\n"
+            "   les colonnes non-agrégées\n\n"
+            "EXEMPLE CORRECT :\n"
+            "SELECT time_bucket('1 hour', timestamp)\n"
+            "       AS bucket, AVG(poids)\n"
+            "FROM ebauche_data\n"
+            "GROUP BY bucket\n"
+            "ORDER BY bucket ASC\n"
+            "LIMIT 100\n\n"
             "Tables et colonnes disponibles :\n"
             f"{schema_json}\n\n"
             "Exemple générique :\n"
@@ -152,6 +337,9 @@ class SQLAgent:
             f"Tables : {tables}\n"
             f"Colonnes : {columns}\n"
             f"Filtre temps : {time_filter_hours}h ou null\n"
+            f"Colonne de groupe : {group_filter_column or 'null'}\n"
+            "Si colonne de groupe renseignée,\n"
+            "inclure cette colonne dans le SELECT.\n"
             "Génère le SQL."
         )
         return {"system": system_prompt, "user": user_prompt}
@@ -237,6 +425,27 @@ class SQLAgent:
             if re.search(rf"\b{mot}\b", sql_clean, re.IGNORECASE):
                 return {"valid": False, "sql_safe": None, "error": "mot interdit"}
 
+        if re.search(r"\bFULL\s+OUTER\s+JOIN\b", sql_clean, re.IGNORECASE):
+            return {
+                "valid": False,
+                "sql_safe": None,
+                "error": "FULL OUTER JOIN interdit",
+            }
+
+        if re.search(r"\bUNION\s+ALL\b", sql_clean, re.IGNORECASE):
+            return {
+                "valid": False,
+                "sql_safe": None,
+                "error": "UNION ALL interdit",
+            }
+
+        if re.search(r"\bUNION\b", sql_clean, re.IGNORECASE):
+            return {
+                "valid": False,
+                "sql_safe": None,
+                "error": "UNION interdit",
+            }
+
         try:
             statements = sqlglot.parse(sql_clean, dialect="postgres")
         except Exception as exc:
@@ -288,7 +497,69 @@ class SQLAgent:
                 if fallback_used:
                     cursor.execute("SET TRANSACTION READ ONLY")
                 cursor.execute("SET LOCAL statement_timeout = '2000ms'")
-                cursor.execute(sql)
+                sql_to_execute = sql
+                sql_to_execute = re.sub(
+                    r"(?i)TIME_BUCKET\('(\w+)'",
+                    lambda m: f"time_bucket('1 {m.group(1).lower()}'",
+                    sql_to_execute,
+                )
+                has_aggregate = re.search(
+                    r"\b(?:AVG|SUM|MIN|MAX|COUNT)\s*\(",
+                    sql_to_execute,
+                    re.IGNORECASE,
+                )
+                has_group_by = re.search(
+                    r"\bGROUP\s+BY\b",
+                    sql_to_execute,
+                    re.IGNORECASE,
+                )
+                select_match = re.search(
+                    r"\bSELECT\b(?P<select_clause>.*?)\bFROM\b",
+                    sql_to_execute,
+                    re.IGNORECASE | re.DOTALL,
+                )
+                select_clause = select_match.group("select_clause") if select_match else ""
+                has_timestamp_in_select = re.search(
+                    r"(?:^|,)\s*(?:[A-Za-z_][A-Za-z0-9_]*\.)?\"?timestamp\"?\s*(?:,|$)",
+                    select_clause,
+                    re.IGNORECASE,
+                )
+                logger.debug(
+                    f"[SQL] sql_to_execute = {sql_to_execute}"
+                )
+                logger.debug(
+                    f"[SQL] has_aggregate = {bool(has_aggregate)}"
+                )
+                logger.debug(
+                    f"[SQL] has_group_by = {bool(has_group_by)}"
+                )
+                logger.debug(
+                    f"[SQL] select_clause = '{select_clause}'"
+                )
+                logger.debug(
+                    f"[SQL] has_timestamp = {bool(has_timestamp_in_select)}"
+                )
+                if has_aggregate and not has_group_by and has_timestamp_in_select:
+                    # Cas 1 : timestamp en premier avec préfixe optionnel
+                    sql_to_execute = re.sub(
+                        r"(?i)SELECT\s+(?:[A-Za-z_][A-Za-z0-9_]*\.)?"
+                        r"\"?timestamp\"?\s*,\s*",
+                        "SELECT ",
+                        sql_to_execute,
+                    )
+
+                    # Cas 2 : timestamp en milieu avec préfixe optionnel
+                    sql_to_execute = re.sub(
+                        r"(?i),\s*(?:[A-Za-z_][A-Za-z0-9_]*\.)?"
+                        r"\"?timestamp\"?\s*(?=,|\s+FROM)",
+                        "",
+                        sql_to_execute,
+                    )
+                    logger.warning(
+                        "Timestamp retire du SELECT agrege sans GROUP BY avant execution"
+                    )
+
+                cursor.execute(sql_to_execute)
                 rows = cursor.fetchall()
                 columns = [desc[0] for desc in cursor.description]
                 conn.rollback()
@@ -373,6 +644,31 @@ class SQLAgent:
 
                 sql_used = validation["sql_safe"]
                 df = self._execute_sql(sql_used)
+                if df is not None and len(df.index) < _MIN_ANALYSIS_ROWS:
+                    group_column = (
+                        filters.get("group_filter_column")
+                        if isinstance(filters, dict)
+                        else None
+                    )
+                    sparse_sql = self._build_series_fallback_sql(
+                        tables,
+                        _target_column,
+                        reduced_schema,
+                        group_column if isinstance(group_column, str) else None,
+                    )
+                    df_sparse = self._execute_sql(sparse_sql)
+                    if (
+                        df_sparse is not None
+                        and len(df_sparse.index) >= _MIN_ANALYSIS_ROWS
+                    ):
+                        logger.warning(
+                            "SQL LLM trop peu de lignes (%s), "
+                            "fallback serie brute (%s lignes)",
+                            len(df.index),
+                            len(df_sparse.index),
+                        )
+                        sql_used = sparse_sql
+                        df = df_sparse
                 if df is not None:
                     break
                 attempt_errors.append("execution sql échouée")
@@ -389,7 +685,10 @@ class SQLAgent:
                 if df is None:
                     raise RuntimeError("fallback SQL execution failed")
                 if attempt_errors:
-                    state["errors"].append("; ".join(attempt_errors))
+                    state.setdefault("warnings", [])
+                    state["warnings"].append(
+                        "SQL LLM: " + "; ".join(attempt_errors)
+                    )
 
             state["df_raw"] = df
             state["sql"] = sql_used

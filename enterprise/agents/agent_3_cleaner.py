@@ -339,7 +339,19 @@ class DataCleaner:
             stats = computed["stats"]
             stats["warnings"] = warnings + stats["warnings"]
 
-            state["df_propre"] = computed["df_propre"]
+            df_propre = computed["df_propre"]
+            # Supprimer les colonnes booléennes de df_propre
+            # pour éviter que les spécialistes les utilisent
+            bool_cols = df_propre.select_dtypes(
+                include=['bool']).columns.tolist()
+            if bool_cols:
+                df_propre = df_propre.drop(
+                    columns=bool_cols)
+                logger.info(
+                    f"Colonnes booléennes supprimées "
+                    f"de df_propre : {bool_cols}")
+
+            state["df_propre"] = df_propre
             state["df_anomalies"] = computed["df_anomalies"]
             state["cleaning_stats"] = stats
 

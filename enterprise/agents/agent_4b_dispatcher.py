@@ -80,6 +80,7 @@ class DispatcherAgent:
         df: pd.DataFrame | None,
         goal: str,
         specialists: list[str],
+        intention: dict | None = None,
     ) -> dict:
         """
         Filter the requested specialists based on minimal data sufficiency rules.
@@ -88,6 +89,7 @@ class DispatcherAgent:
             df: Input DataFrame to analyze.
             goal: Classified analytical goal.
             specialists: Initial specialist list for the goal.
+            intention: Intention payload from agent 4a.
 
         Returns:
             dict: Blocking status, valid specialists, and warnings.
@@ -104,6 +106,12 @@ class DispatcherAgent:
 
         if len(df.index) < 5:
             warnings.append("Donnees insuffisantes: moins de 5 lignes")
+            logger.warning(
+                "Pre-gate bloque (goal=%s): %s lignes, specialists=%s",
+                goal,
+                len(df.index),
+                specialists,
+            )
             return {
                 "blocked": True,
                 "specialists_valides": [],
@@ -131,11 +139,79 @@ class DispatcherAgent:
             logger.warning(warning)
             warnings.append(warning)
 
+        if len(numeric_columns) < 2 and "regression" in specialists_valides:
+            specialists_valides.remove("regression")
+            warning = "regression retire: moins de 2 colonnes numeriques"
+            logger.warning(warning)
+            warnings.append(warning)
+
+        if "anova_kruskal" in specialists_valides:
+            group_column = None
+            if isinstance(intention, dict):
+                candidate = intention.get("group_col")
+                if isinstance(candidate, str) and candidate in df.columns:
+                    group_column = candidate
+
+            if group_column is None:
+                group_column = self._pick_categorical_column(df)
+
+            if group_column is None:
+                specialists_valides.remove("anova_kruskal")
+                warning = "Pas de colonne catégorielle disponible"
+                logger.warning(warning)
+                warnings.append(warning)
+            elif df[group_column].nunique(dropna=True) < 2:
+                specialists_valides.remove("anova_kruskal")
+                warning = (
+                    f"anova_kruskal retire: {group_column} "
+                    "n'a qu'un groupe distinct"
+                )
+                logger.warning(warning)
+                warnings.append(warning)
+
         return {
             "blocked": len(specialists_valides) == 0,
             "specialists_valides": specialists_valides,
             "warnings": warnings,
         }
+
+    def _pick_categorical_column(self, df: pd.DataFrame | None) -> str | None:
+        """
+        Pick a categorical column for group comparisons.
+
+        Prefers industrial labels (`modele`, etc.) when they have at least two
+        distinct values; otherwise falls back to the first object/string column.
+
+        Args:
+            df: Candidate analysis DataFrame.
+
+        Returns:
+            str | None: First categorical-like column, if any.
+        """
+        if df is None or df.empty:
+            return None
+
+        for preferred in ("modele", "categorie", "machine", "numero_programme"):
+            if preferred not in df.columns:
+                continue
+            series = df[preferred]
+            if (
+                pd.api.types.is_object_dtype(series)
+                or pd.api.types.is_string_dtype(series)
+                or pd.api.types.is_categorical_dtype(series)
+            ) and series.nunique(dropna=True) >= 2:
+                return preferred
+
+        for column in df.columns:
+            series = df[column]
+            if (
+                pd.api.types.is_object_dtype(series)
+                or pd.api.types.is_string_dtype(series)
+                or pd.api.types.is_categorical_dtype(series)
+            ):
+                return str(column)
+
+        return None
 
     def _load_specialist(self, name: str) -> object | None:
         """
@@ -190,6 +266,8 @@ class DispatcherAgent:
             }
 
         try:
+            params = dict(params or {})
+            params["target_column"] = state.get("target_column", "")
             return specialist.run(df, state, params)
         except Exception as exc:
             logger.exception("Execution du specialiste %s echouee", name)
@@ -206,6 +284,7 @@ class DispatcherAgent:
         name: str,
         intention: dict,
         state: dict,
+        df: pd.DataFrame,
     ) -> dict:
         """
         Build specialist-specific parameters from the current intention and state.
@@ -214,6 +293,7 @@ class DispatcherAgent:
             name: Specialist short name.
             intention: Intention payload from agent 4a.
             state: Shared pipeline state.
+            df: DataFrame used for specialist execution.
 
         Returns:
             dict: Specialist parameters.
@@ -221,7 +301,10 @@ class DispatcherAgent:
         params: dict[str, Any] = {}
 
         if name == "anova_kruskal":
-            params["group_column"] = intention.get("group_col")
+            group_column = intention.get("group_col")
+            if not isinstance(group_column, str) or group_column not in df.columns:
+                group_column = self._pick_categorical_column(df)
+            params["group_column"] = group_column
 
         if name == "pivot":
             params["group_col"] = intention.get("group_col")
@@ -253,10 +336,6 @@ class DispatcherAgent:
         specialist_state.setdefault("errors", [])
         specialist_state.setdefault("warnings", [])
         specialist_state.setdefault("agents_called", [])
-
-        target_col = intention.get("target_col")
-        if isinstance(target_col, str) and target_col:
-            specialist_state["target_column"] = target_col
 
         group_col = intention.get("group_col")
         if isinstance(group_col, str) and group_col:
@@ -357,6 +436,10 @@ class DispatcherAgent:
 
         try:
             intention = state.get("intention", {}) if isinstance(state, dict) else {}
+            # Ne jamais écraser target_column
+            # avec l'intention du LLM
+            # state["target_column"] est posé par agent_1
+            # et ne doit jamais être modifié après
             goal = intention.get("goal", "resume")
             if goal not in GOAL_TO_SPECIALISTS:
                 goal = "resume"
@@ -366,7 +449,7 @@ class DispatcherAgent:
                 if "fourier" not in specialists:
                     specialists.append("fourier")
 
-            pre_gate = self._pre_gate(df, goal, specialists)
+            pre_gate = self._pre_gate(df, goal, specialists, intention)
             specialists_valides = pre_gate["specialists_valides"]
             specialists_bloques = [
                 specialist for specialist in specialists
@@ -381,7 +464,6 @@ class DispatcherAgent:
                 error_message = "Aucun specialiste executable apres pre-gate"
                 if isinstance(state, dict):
                     state["specialist_results"] = []
-                    state["errors"].append(error_message)
                 return {
                     "agent": "agent_4b_dispatcher",
                     "status": "error",
@@ -396,7 +478,12 @@ class DispatcherAgent:
 
             task_specs = []
             for name in specialists_valides:
-                params = self._build_params(name, intention, state if isinstance(state, dict) else {})
+                params = self._build_params(
+                    name,
+                    intention,
+                    state if isinstance(state, dict) else {},
+                    df,
+                )
                 specialist_state = self._build_specialist_state(
                     state if isinstance(state, dict) else {},
                     intention,

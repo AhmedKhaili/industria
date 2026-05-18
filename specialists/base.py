@@ -144,7 +144,19 @@ class BaseSpecialist(ABC):
             state["agents_called"].append(agent_name)
 
         numeric_columns = list(df.select_dtypes(include=[np.number]).columns) if df is not None else []
-        target_column = state.get("target_column") if isinstance(state, dict) else None
+
+        logger.debug(
+            f"[BASE.run] params = {params}"
+        )
+        logger.debug(
+            f"[BASE.run] state.target_column = "
+            f"{state.get('target_column', 'ABSENT') if isinstance(state, dict) else 'NO STATE'}"
+        )
+
+        target_column = (
+            params.get("target_column")
+            or state.get("target_column")
+        ) if isinstance(state, dict) else params.get("target_column")
         if not target_column:
             target_column = numeric_columns[0] if numeric_columns else None
 
