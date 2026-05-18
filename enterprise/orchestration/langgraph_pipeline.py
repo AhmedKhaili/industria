@@ -22,6 +22,7 @@ from enterprise.agents.agent_4a_methodologist import MethodologistAgent
 from enterprise.agents.agent_4b_dispatcher import DispatcherAgent
 from enterprise.agents.statistician_judge import StatisticianJudge
 from enterprise.agents.agent_5_interpreter import InterpreterAgent
+from enterprise.agents.report_agent import ReportAgent
 
 logger = logging.getLogger(__name__)
 
@@ -32,6 +33,7 @@ methodologist = MethodologistAgent()
 dispatcher = DispatcherAgent()
 judge = StatisticianJudge()
 interpreter = InterpreterAgent()
+report_agent = ReportAgent()
 
 
 def _append_agent_called(state: AgentState | dict, agent_name: str) -> None:
@@ -278,7 +280,7 @@ def node_interpreter(state: AgentState) -> AgentState:
 
 def node_report(state: AgentState) -> AgentState:
     """
-    Placeholder for the report agent until Sprint 5 implementation.
+    Generate the PDF report via Agent 6.
 
     Args:
         state: Shared pipeline state.
@@ -286,9 +288,9 @@ def node_report(state: AgentState) -> AgentState:
     Returns:
         AgentState: Updated state.
     """
-    logger.info("Report agent placeholder - Sprint 5")
-    state["pdf_path"] = ""
-    _append_agent_called(state, "report_agent")
+    logger.info("Node report started")
+    result = report_agent.run(state)
+    _append_error(state, result.get("error"))
     return state
 
 

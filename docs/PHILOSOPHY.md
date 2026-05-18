@@ -177,7 +177,7 @@ bien construit pour un agent JSON :
 
 ---
 
-## 9. RÈGLES PRODUIT — AGENTS 5 & 6, MONITORING, KPIs
+## 9. RÈGLES PRODUIT — AGENTS 5, 6a/6b/6c, MONITORING, KPIs
 
 ### RÈGLE AGENT 5
 
@@ -185,21 +185,40 @@ Le LLM génère **UNIQUEMENT** OBSERVER et ANALYSER.
 PRESCRIRE et CERTIFIER sont **toujours Python pur**.
 Jamais l'inverse.
 
-### RÈGLE AGENT 6
+### RÈGLE AGENT 6a
 
-Le LLM génère **uniquement** le résumé exécutif (Section 1 du PDF).
-Toutes les autres sections sont **Python pur**.
-Jamais de données brutes capteurs dans le LLM.
+Chaque appel LLM interprète **un seul** résultat statistique.
+Maximum **4 clés JSON** en entrée.
+Jamais de contexte cumulatif entre spécialistes.
+Python choisit les métriques à envoyer.
+
+### RÈGLE AGENT 6b
+
+Le LLM génère **uniquement** le résumé exécutif.
+Reçoit un JSON compact (≈ 4 clés agrégées).
+**Jamais** les textes bruts des interprétations 6a.
+
+### RÈGLE AGENT 6c
+
+**100 % Python pur.** Aucun appel LLM.
+Assemble les textes des 6a, le résumé 6b et le verdict OAPC (Agent 5).
+
+### RÈGLE GÉNÉRALE REPORT
+
+La latence du rapport est acceptable.
+**Qualité > vitesse** pour le PDF.
+**Un appel LLM par spécialiste** (6a), puis un pour la synthèse (6b).
+Python agrège ; le LLM interprète.
 
 ### RÈGLE MONITORING
 
-Le monitoring planifié est **Python pur** (z-score glissant).
+Monitoring planifié **Python pur** (z-score glissant).
 Le LLM n'est appelé **que si** z-score > 3 déclenche le pipeline.
 Jamais de surveillance continue via LLM.
 
 ### RÈGLE KPIs
 
-Tous les KPIs (OEE/TRS, Cp/Cpk, MTBF, kWh/lot, etc.) sont calculés en **Python pur** depuis TimescaleDB.
+Tous les KPIs sont calculés en **Python pur** (TimescaleDB).
 **Jamais** calculés par le LLM.
 
 ---

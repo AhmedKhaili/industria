@@ -61,7 +61,14 @@ class AgentState(TypedDict):
     anomaly_detected: bool
     confidence: str  # "haute"|"moyenne"|"faible"
 
-    # Sortie Agent 6 / historique
+    # Sortie Agents 6a / 6b
+    interpretations: dict
+    # Format interpretations :
+    # {"ZScoreSpecialist": "texte...", "SpcSpecialist": "..."}
+
+    resume_executif: str
+
+    # Sortie Agent 6c / historique
     pdf_path: str
     analyses_history: list[dict]
 
@@ -107,6 +114,8 @@ def create_initial_state(question: str) -> AgentState:
         "priority": "P4",
         "anomaly_detected": False,
         "confidence": "",
+        "interpretations": {},
+        "resume_executif": "",
         "pdf_path": "",
         "analyses_history": [],
         "errors": [],
