@@ -177,7 +177,34 @@ bien construit pour un agent JSON :
 
 ---
 
-## 9. CHECKLIST AVANT DE VALIDER UN AGENT
+## 9. RÈGLES PRODUIT — AGENTS 5 & 6, MONITORING, KPIs
+
+### RÈGLE AGENT 5
+
+Le LLM génère **UNIQUEMENT** OBSERVER et ANALYSER.
+PRESCRIRE et CERTIFIER sont **toujours Python pur**.
+Jamais l'inverse.
+
+### RÈGLE AGENT 6
+
+Le LLM génère **uniquement** le résumé exécutif (Section 1 du PDF).
+Toutes les autres sections sont **Python pur**.
+Jamais de données brutes capteurs dans le LLM.
+
+### RÈGLE MONITORING
+
+Le monitoring planifié est **Python pur** (z-score glissant).
+Le LLM n'est appelé **que si** z-score > 3 déclenche le pipeline.
+Jamais de surveillance continue via LLM.
+
+### RÈGLE KPIs
+
+Tous les KPIs (OEE/TRS, Cp/Cpk, MTBF, kWh/lot, etc.) sont calculés en **Python pur** depuis TimescaleDB.
+**Jamais** calculés par le LLM.
+
+---
+
+## 10. CHECKLIST AVANT DE VALIDER UN AGENT
 
 □ Le LLM retourne uniquement un JSON ?
 □ La validation Python vérifie les colonnes ?

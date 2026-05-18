@@ -32,9 +32,11 @@ SPÉCIALISTES (Python pur, asyncio parallèle)
         ↓
 STATISTICIAN JUDGE (Python pur)
         ↓
-AGENT 5 — Interprète
+AGENT 5 — Interprète OAPC
         ↓
-REPORT AGENT → PDF + Streamlit
+AGENT 6 — Report PDF (ReportLab + Plotly)
+        ↓
+STREAMLIT + monitoring planifié (Sprint 5)
 ```
 
 ---
@@ -337,50 +339,214 @@ RETOURNE :
 
 ---
 
-## AGENT 5 — Interprète
+## AGENT 5 — Interpréteur OAPC
 
 | Champ | Valeur |
 |-------|--------|
 | Fichier | enterprise/agents/agent_5_interpreter.py |
-| Modèle | qwen2.5-coder:7b |
-| num_ctx | 4000 |
-| num_predict | 400 |
-| temperature | 0.3 |
-| LLM | OUI — explication FR uniquement |
+| Modèle | qwen2.5-coder:14b |
+| num_ctx | 4096 |
+| LLM | OUI — OBSERVER et ANALYSER uniquement |
 
-RÈGLES DUR-CODÉES (injectées dans le prompt) :
-  z > 3.0     → anomalie significative
-  Cp < 1.33   → process non capable
-  Cpk < 1.0   → process hors contrôle
-  p < 0.05    → statistiquement significatif
-  MAD > 3.5   → bruit capteur probable
-  R² > 0.8    → corrélation forte
+### Structure OAPC
+
+| Étape | Moteur | Rôle |
+|-------|--------|------|
+| **OBSERVER** | LLM | Une phrase factuelle (JSON compact uniquement) |
+| **ANALYSER** | LLM | Une phrase de contexte (JSON compact uniquement) |
+| **PRESCRIRE** | Python pur | Table `REGLES_PRESCRIRE` par goal + priorité |
+| **CERTIFIER** | Python pur | Template fixe + hash SHA-256 du JSON compact |
+
+### Profils utilisateur (`user_profile`)
+
+`operateur` | `technicien` | `ingenieur` | `directeur` (défaut : `technicien`)
+
+### Budgets tokens par profil
+
+| Profil | num_predict | temperature |
+|--------|-------------|-------------|
+| operateur | 150 | 0.1 |
+| technicien | 250 | 0.2 |
+| ingenieur | 350 | 0.3 |
+| directeur | 200 | 0.2 |
+
+### Mots interdits par profil
+
+- **operateur** : z-score, zscore, écart-type, variance, p-value, shapiro, anova, médiane, percentile
+- **directeur** : z-score, zscore, écart-type, shapiro, anova
+- **technicien / ingenieur** : aucune liste (jargon autorisé)
+
+### Validation post-LLM
+
+- **Souple sur la forme** : variantes `OBSERVER:` / `OBSERVER :` / casse mixte / deux-points optionnels
+- **Stricte sur le fond** :
+  - chiffres inventés rejetés (**tous les profils**, tolérance ±0,5)
+  - mots interdits rejetés selon le profil
+- **Fallback** : template déterministe après 3 échecs LLM
+
+### Niveaux d'alerte (Python pur)
+
+`P1` > `P2` > `P3` > `P4` — déterminés par `_determine_priority()` selon le `goal` et les `validated_results` (Cpk, % anomalies, dérive, etc.)
+
+REÇOIT :
+  `state["validated_results"]`, `state["intention"]`, `state["target_column"]`, `state["user_profile"]`
 
 RETOURNE :
+  ```python
   {
-    "explication": "texte FR technicien",
-    "recommandation": "action concrète",
-    "anomaly_detected": true|false,
-    "confidence": "haute|moyenne|faible",
+    "agent": "agent_5_interpreter",
+    "status": "success"|"error",
+    "rapport": {
+      "observer": str,
+      "analyser": str,
+      "prescrire": str,
+      "certifier": str,
+      "priority": "P1"|"P2"|"P3"|"P4",
+      "user_profile": str,
+      "goal": str
+    },
+    "execution_time_ms": int,
     "error": null
   }
+  ```
+
+MET À JOUR LE STATE :
+  `explanation`, `recommendation`, `anomaly_detected`, `confidence`, `rapport_oapc`, `priority`
+
+RÈGLES : jamais de DataFrame ni données brutes capteurs dans le prompt LLM. JSON compact ≤ 7 clés.
 
 ---
 
-## REPORT AGENT
+## AGENT 6 — Report PDF (ReportLab + Plotly)
 
-| Fichier | enterprise/agents/report_agent.py |
+| Champ | Valeur |
+|-------|--------|
+| Fichier | enterprise/agents/report_agent.py (Sprint 5) |
 | Librairies | ReportLab + Plotly |
-| LLM | NON |
+| LLM | OUI — Section 1 uniquement |
 
-CONTENU PDF :
-  - Question posée
-  - Méthodes utilisées
-  - Graphes Plotly exportés
-  - Tableaux de résultats
-  - Explication Agent 5
-  - Recommandation
-  - Horodatage + référence EN9100
+### Sections du PDF
+
+1. **Résumé exécutif** — LLM (adapté au `user_profile`)
+2. **Graphique principal annoté** — Plotly (Python pur)
+3. **Causes probables** — Python pur
+4. **Recommandation + délai** — Python pur (depuis PRESCRIRE Agent 5)
+5. **Annexe technique** — Python pur (métriques, méthodes, warnings judge)
+6. **Traçabilité EN9100** — horodatage + version IndustrIA + SHA-256 + emplacement double signature
+
+Export PDF horodaté, signable, adapté au profil utilisateur.
+
+---
+
+## MONITORING PLANIFIÉ (Sprint 5)
+
+- Tâche **cron toutes les heures**
+- Calcul **z-score glissant Python pur** sur la dernière heure TimescaleDB
+- Si z-score > 3 → déclenche le **pipeline LangGraph complet** automatiquement
+- Génère un **rapport OAPC** automatique
+- Alimente une table **alertes non acquittées**
+- Niveaux **P1 / P2 / P3 / P4** automatiques
+- **Escalade** : si P1 non acquitté sous 5 min → notification responsable
+- **Persistance TimescaleDB immuable**
+
+---
+
+## ACQUITTEMENT ALERTES (Sprint 5)
+
+- Bouton **Acquitter** sur l'interface Streamlit
+- Enregistre : nom opérateur, timestamp au millième de seconde, commentaire obligatoire, action corrective
+- Persistance TimescaleDB
+- Hash **SHA-256** de l'acquittement
+- Conformité **EN9100** obligatoire
+
+---
+
+## PERSISTANCE HISTORIQUE (Sprint 5)
+
+Table **`analyses_history`** (TimescaleDB) :
+
+`id`, `user_id`, `question`, `profil`, `json_compact`, `rapport_oapc`, `priority`, `timestamp`, `hash`
+
+- Ne jamais stocker les **données brutes capteurs**
+- Cache **SQLite** pour le mode dégradé
+
+---
+
+## FILE D'ATTENTE OLLAMA (Sprint 5)
+
+- **Lock Python FIFO**
+- **1 seul appel LLM** à la fois
+- Indicateur de position dans la file
+- Protection **CUDA Out of Memory**
+- Timeout utilisateur si attente **> 30 secondes**
+
+---
+
+## MODE DÉGRADÉ (Sprint 5)
+
+Si Ollama indisponible :
+
+- Message clair à l'utilisateur
+- Affichage du **dernier état connu**
+- Cache SQLite des dernières analyses
+- Alertes calculées en **Python pur** restent actives
+
+---
+
+## INTERFACE STREAMLIT (Sprint 5)
+
+- Sélecteur de profil (4 niveaux)
+- Chat question / réponse avec historique
+- Centre d'alertes avec acquittement
+- Export PDF / CSV
+- File d'attente Ollama visible
+- Mode dégradé géré proprement
+- **Responsive mobile**
+
+---
+
+## KPIs DASHBOARD (Sprint 5)
+
+Calculés en **Python pur** via TimescaleDB — **jamais par le LLM** :
+
+**Production** : OEE/TRS (Disponibilité × Performance × Qualité), taux disponibilité, performance, qualité, MTBF, MTTR, scrap rate
+
+**Qualité** : Cp/Cpk, First Pass Yield, PPM, taux conformité
+
+**Maintenance** : santé machine, dérive capteur
+
+**Énergie** : kWh/lot, rendement thermique
+
+---
+
+## SCRIPT BACKTEST (Sprint 5.5)
+
+- Rejouer des **CSV historiques**
+- Simuler le monitoring sur données passées
+- Prouver la détection d'anomalie **avant panne**
+- Calculer le **ROI évité** (coût arrêt × heures)
+- Argument de vente terrain
+
+---
+
+## SPRINT 6 (futur)
+
+- Monitoring temps réel WebSocket (< 10 s)
+- VRAM Watchdog CUDA
+- Mode Investigation (plage temporelle)
+- Mode Comparaison A/B
+- Shift Handover automatique fin de poste
+- Cache sémantique pgvector (< 100 ms)
+- Dashboard TV atelier (feux tricolores)
+
+---
+
+## ARGUMENT COMMERCIAL
+
+> 5000–10000 €/mois de cloud qui viole l'ITAR  
+> vs IndustrIA sur PC à 400 €.  
+> 100 % local. Auditable EN9100.  
+> On prouve sur vos données historiques qu'on aurait détecté votre dernière panne 48 h avant.
 
 ---
 
@@ -388,13 +554,14 @@ CONTENU PDF :
 
 ```bash
 OLLAMA_KEEP_ALIVE=-1
-OLLAMA_NUM_PARALLEL=1
+OLLAMA_NUM_PARALLEL=1   # file FIFO applicative en plus
 
 # Par agent :
 agent_1 : num_ctx=8000 num_predict=150 temp=0.1
 agent_2 : num_ctx=4000 num_predict=300 temp=0.0
 agent_4a: num_ctx=2000 num_predict=150 temp=0.1
-agent_5 : num_ctx=4000 num_predict=400 temp=0.3
+agent_5 : num_ctx=4096  num_predict=150-350 selon profil  temp=0.1-0.3  model=14b
+agent_6 : num_ctx=4000  num_predict=200-300 Section 1   temp=0.2
 ```
 
 ---
@@ -431,6 +598,7 @@ failed_agents.jsonl
 ```python
 class AgentState(TypedDict):
     question: str
+    user_profile: str          # operateur|technicien|ingenieur|directeur
     tables: list[str]
     columns: list[str]
     target_column: str
@@ -438,14 +606,24 @@ class AgentState(TypedDict):
     df_raw: Any
     df_propre: Any
     df_anomalies: Any
+    cleaning_stats: dict
     intention: dict
+    specialist_tasks: list[dict]
     specialist_results: list[dict]
     validated_results: list[dict]
+    judge_warnings: list[str]
     explanation: str
     recommendation: str
+    rapport_oapc: dict
+    priority: str              # P1|P2|P3|P4
+    anomaly_detected: bool
+    confidence: str
     pdf_path: str
+    analyses_history: list[dict]
     errors: list[str]
     warnings: list[str]
+    pipeline_start_time: float
+    agents_called: list[str]
 ```
 
 ---
@@ -454,13 +632,14 @@ class AgentState(TypedDict):
 
 ```
 Sprint 1 ✅ DONE (prototype)
-Sprint 2 → agent_1, agent_2, agent_3
-Sprint 3 → tous les spécialistes MVP
-Sprint 4 → agent_4a, agent_4b, judge,
-           LangGraph complet
-Sprint 5 → agent_5, report, streamlit
-Sprint 6 → cache pgvector, monitoring,
-           tests unitaires
+Sprint 2 ✅ agent_1, agent_2, agent_3
+Sprint 3 ✅ spécialistes MVP
+Sprint 4 ✅ agent_4a, agent_4b, judge, LangGraph
+Sprint 5 → agent_5 OAPC, agent_6 PDF, Streamlit,
+           monitoring cron, acquittement, historique,
+           file Ollama, mode dégradé, KPIs dashboard
+Sprint 5.5 → script backtest CSV / ROI
+Sprint 6 → WebSocket, pgvector, dashboard TV, …
 ```
 
 ---

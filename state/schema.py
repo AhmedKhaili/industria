@@ -7,6 +7,7 @@ class AgentState(TypedDict):
 
     # Question originale
     question: str
+    user_profile: str  # operateur|technicien|ingenieur|directeur
 
     # Sortie Agent 1
     tables: list[str]
@@ -52,14 +53,17 @@ class AgentState(TypedDict):
     validated_results: list[dict]
     judge_warnings: list[str]
 
-    # Sortie Agent 5
+    # Sortie Agent 5 (OAPC)
     explanation: str
     recommendation: str
+    rapport_oapc: dict
+    priority: str  # P1|P2|P3|P4
     anomaly_detected: bool
     confidence: str  # "haute"|"moyenne"|"faible"
 
-    # Sortie Report Agent
+    # Sortie Agent 6 / historique
     pdf_path: str
+    analyses_history: list[dict]
 
     # Métadonnées pipeline
     errors: list[str]
@@ -83,6 +87,7 @@ def create_initial_state(question: str) -> AgentState:
 
     return {
         "question": question,
+        "user_profile": "technicien",
         "tables": [],
         "columns": [],
         "target_column": "",
@@ -98,9 +103,12 @@ def create_initial_state(question: str) -> AgentState:
         "judge_warnings": [],
         "explanation": "",
         "recommendation": "",
+        "rapport_oapc": {},
+        "priority": "P4",
         "anomaly_detected": False,
         "confidence": "",
         "pdf_path": "",
+        "analyses_history": [],
         "errors": [],
         "warnings": [],
         "pipeline_start_time": 0.0,

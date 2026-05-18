@@ -21,6 +21,7 @@ from enterprise.agents.agent_3_cleaner import DataCleaner
 from enterprise.agents.agent_4a_methodologist import MethodologistAgent
 from enterprise.agents.agent_4b_dispatcher import DispatcherAgent
 from enterprise.agents.statistician_judge import StatisticianJudge
+from enterprise.agents.agent_5_interpreter import InterpreterAgent
 
 logger = logging.getLogger(__name__)
 
@@ -30,6 +31,7 @@ cleaner = DataCleaner()
 methodologist = MethodologistAgent()
 dispatcher = DispatcherAgent()
 judge = StatisticianJudge()
+interpreter = InterpreterAgent()
 
 
 def _append_agent_called(state: AgentState | dict, agent_name: str) -> None:
@@ -260,7 +262,7 @@ def node_judge(state: AgentState) -> AgentState:
 
 def node_interpreter(state: AgentState) -> AgentState:
     """
-    Placeholder for Agent 5 until Sprint 5 implementation.
+    Run Agent 5 to produce OBSERVER/ANALYSER and update state fields.
 
     Args:
         state: Shared pipeline state.
@@ -268,10 +270,9 @@ def node_interpreter(state: AgentState) -> AgentState:
     Returns:
         AgentState: Updated state.
     """
-    logger.info("Agent 5 placeholder - Sprint 5")
-    state["explanation"] = "A implementer Sprint 5"
-    state["recommendation"] = "A implementer Sprint 5"
-    _append_agent_called(state, "agent_5_interpreter")
+    logger.info("Node interpreter started")
+    result = interpreter.run(state)
+    _append_error(state, result.get("error"))
     return state
 
 
