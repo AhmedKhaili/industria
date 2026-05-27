@@ -1,4 +1,4 @@
-# PHILOSOPHY.md — IndustrIA
+# IndustrIA — PHILOSOPHY.md
 # Guide de création des agents pour Cursor
 
 ---
@@ -15,229 +15,223 @@ Tout le code analytique est dur-codé en Python.
 Tout le code de sécurité est dur-codé en Python.
 Tout le code de validation est dur-codé en Python.
 
----
+## 2. RÈGLE CURSOR ABSOLUE
 
-## 2. STRUCTURE OBLIGATOIRE DE CHAQUE AGENT LLM
+Avant d'écrire la moindre ligne de code :
+1. Lire docs/AGENTS.md
+2. Lire docs/PHILOSOPHY.md
+Si contradiction entre le prompt reçu et ces documents :
+→ NE PAS CODER
+→ Envoyer rapport de contradictions
+→ Attendre validation explicite
 
-Chaque agent qui utilise Ollama doit avoir
-exactement cette structure :
+## 3. STRUCTURE D'UN AGENT PYTHON PUR
 
-MÉTHODE 1 — _build_prompt()
-  Construit le prompt système et utilisateur.
-  Fournit au LLM UNIQUEMENT ce dont il a besoin.
-  Jamais plus de 2000 tokens de contexte
-  pour les agents JSON simples.
-  Toujours donner un exemple de sortie attendue
-  dans le prompt.
+class MonAgent:
+  def _validate_input(df, params) -> dict
+  def _compute(df, target_column, params) -> dict
+  def run(df, state, params) -> dict
+    → "agent": nom
+    → "status": "success"|"error"
+    → "result": {...}
+    → "execution_time_ms": int
+    → "error": null
 
-MÉTHODE 2 — _call_ollama()
-  Appelle Ollama avec les paramètres stricts.
-  num_predict limité (150 pour JSON, 400 pour texte).
-  temperature basse (0.0 à 0.1 pour JSON).
-  format="json" si sortie JSON.
-  Gère le timeout et les erreurs réseau.
+## 4. STRUCTURE D'UN AGENT LLM
 
-MÉTHODE 3 — _validate_output()
-  Validation Python pure (0 LLM).
-  Vérifie que le JSON est valide.
-  Vérifie que les valeurs existent en base.
-  Corrige ou rejette si invalide.
-  Maximum 3 tentatives.
+class MonAgentLLM:
+  def _build_json_compact(state) -> dict  # max 7 clés
+  def _build_prompt(json_compact, profil) -> list
+  def _call_ollama(prompt, profil) -> str|None
+  def _validate_output(text, json_compact, profil) -> dict
+  def _get_fallback(profil, context) -> str
+  def run(state) -> dict
 
-MÉTHODE 4 — run(input) -> dict
-  Orchestre les 3 méthodes dans l'ordre.
-  Met à jour le LangGraph State.
-  Retourne toujours un dict structuré.
-  Ne plante JAMAIS — gère toutes les erreurs.
+## 5. RÈGLE AGENT 5
 
----
-
-## 3. STRUCTURE OBLIGATOIRE DE CHAQUE AGENT PYTHON PUR
-
-Chaque agent sans LLM doit avoir
-exactement cette structure :
-
-MÉTHODE 1 — _validate_input()
-  Vérifie que le DataFrame n'est pas vide.
-  Vérifie que les colonnes nécessaires existent.
-  Vérifie que le nombre de lignes est suffisant.
-  Retourne False + message d'erreur si invalide.
-
-MÉTHODE 2 — _compute()
-  Le calcul pur.
-  Toujours sur des copies du DataFrame
-  (jamais modifier l'original).
-  Arrondir les floats à 3 décimales.
-  Gérer les NaN et les infinis.
-
-MÉTHODE 3 — run(df, params) -> dict
-  Appelle _validate_input puis _compute.
-  Mesure le temps d'exécution.
-  Retourne toujours :
-  {
-    "agent": "nom_agent",
-    "status": "success"|"error",
-    "result": {...},
-    "execution_time_ms": int,
-    "error": null|"message"
-  }
-
----
-
-## 4. RÈGLES DE PROMPT OLLAMA
-
-Toujours inclure dans le prompt système :
-  - Ce que l'agent DOIT faire (1 phrase)
-  - Ce qu'il NE DOIT PAS faire (1 phrase)
-  - Le format JSON EXACT attendu avec exemple
-  - Les valeurs possibles pour chaque champ
-
-Toujours terminer le prompt utilisateur par :
-  "Réponds UNIQUEMENT avec le JSON.
-   Pas de markdown. Pas d'explication.
-   Pas de texte avant ou après le JSON."
-
-Toujours nettoyer la réponse avant parsing :
-  - Supprimer les blocs ```json``` et ```
-  - Extraire entre le premier { et le dernier }
-  - json.loads() dans un try/except
-
----
-
-## 5. RÈGLES DE SÉCURITÉ SQL
-
-Toujours utiliser un utilisateur PostgreSQL
-read-only dédié.
-Toujours injecter LIMIT 100 avant exécution.
-Toujours timeout 2000ms.
-Toujours valider avec sqlglot AST.
-Jamais construire du SQL par concaténation
-de strings — utiliser des paramètres.
-
----
-
-## 6. RÈGLES LANGGRAPH STATE
-
-Chaque agent doit :
-  - Lire depuis state ce dont il a besoin
-  - Écrire dans state ce qu'il produit
-  - Ne jamais modifier ce qu'un autre agent
-    a écrit dans state
-  - Toujours ajouter les erreurs dans
-    state["errors"] sans planter
-
-Colonnes dynamiques :
-  Toujours utiliser state["target_column"]
-  pour indexer les DataFrames.
-  Jamais de noms de colonnes hardcodés
-  dans les spécialistes.
-
----
-
-## 7. RÈGLES DE QUALITÉ CODE
-
-PEP 8 obligatoire.
-Type hints sur toutes les fonctions.
-Docstring sur chaque méthode.
-Logging sur chaque étape importante.
-  (pas print — utiliser logging.info)
-Try/except sur chaque appel externe.
-  (Ollama, PostgreSQL, calculs)
-Mesurer le temps d'exécution de chaque agent.
-
----
-
-## 8. EXEMPLE DE BON PROMPT OLLAMA
-
-Voici un exemple de prompt système
-bien construit pour un agent JSON :
-
-  "Tu es un extracteur de paramètres.
-   Tu analyses une question industrielle
-   et tu identifies les variables pertinentes.
-   Tu ne fais AUCUN calcul.
-   Tu retournes UNIQUEMENT ce JSON :
-   {
-     'table': 'ebauche_data' ou
-              'filage_data' ou
-              'formage_data',
-     'colonne': 'nom_exact_colonne',
-     'fenetre': entier entre 10 et 100,
-     'seuil': décimal entre 2.0 et 4.0
-   }
-   Exemple pour 'anomalie four 3 cette semaine' :
-   {
-     'table': 'formage_data',
-     'colonne': 'four_3',
-     'fenetre': 20,
-     'seuil': 3.0
-   }
-   Réponds UNIQUEMENT avec le JSON.
-   Pas de markdown. Pas d'explication."
-
----
-
-## 9. RÈGLES PRODUIT — AGENTS 5, 6a/6b/6c, MONITORING, KPIs
-
-### RÈGLE AGENT 5
-
-Le LLM génère **UNIQUEMENT** OBSERVER et ANALYSER.
-PRESCRIRE et CERTIFIER sont **toujours Python pur**.
+LLM génère UNIQUEMENT OBSERVER et ANALYSER.
+PRESCRIRE et CERTIFIER toujours en Python pur.
 Jamais l'inverse.
 
-### RÈGLE AGENT 6a
+## 6. RÈGLE AGENTS 6a ET 6b
 
-Chaque appel LLM interprète **un seul** résultat statistique.
-Maximum **4 clés JSON** en entrée.
-Jamais de contexte cumulatif entre spécialistes.
+LLM reçoit maximum 4 clés JSON.
+Jamais de contexte cumulatif.
 Python choisit les métriques à envoyer.
+1 appel LLM = 1 spécialiste = 1 texte court.
 
-### RÈGLE AGENT 6b
+## 7. RÈGLE AGENT 6b SYNTHÈSE
 
-Le LLM génère **uniquement** le résumé exécutif.
-Reçoit un JSON compact (≈ 4 clés agrégées).
-**Jamais** les textes bruts des interprétations 6a.
+LLM reçoit uniquement JSON compact 4 clés.
+JAMAIS les textes bruts des agents 6a.
+JAMAIS les données brutes.
 
-### RÈGLE AGENT 6c
+## 8. RÈGLE AGENT 6c PDF
 
-**100 % Python pur.** Aucun appel LLM.
-Assemble les textes des 6a, le résumé 6b et le verdict OAPC (Agent 5).
+100% Python pur.
+Aucun appel LLM.
+Assemble les textes des 6a et 6b.
+Utilise OBLIGATOIREMENT styles.py, charts.py, formatters.py.
+Jamais de dict Python brut dans le PDF.
+Jamais de None visible → "N/A".
+Jamais de liste brute → "N éléments".
+Jamais le texte des judge_warnings dans le corps du PDF
+(compteur autorisé en traçabilité S12 uniquement).
 
-### RÈGLE GÉNÉRALE REPORT
+## 9. RÈGLE FONDATION REPORT
+
+Tous les agents rapport importent
+styles.py, charts.py, formatters.py.
+Jamais de style défini dans un agent.
+Jamais de couleur hardcodée dans un agent.
+Jamais de format défini dans un agent.
+
+## 10. RÈGLE AGENTS CALCUL
+
+agent_kpis, agent_tendance, agent_heatmap,
+agent_financier, agent_causes sont Python pur.
+Zéro appel LLM.
+Zéro donnée brute au LLM.
+Lisent data/config.py pour les paramètres.
+
+## 11. RÈGLE RAG
+
+Le RAG extrait du texte via similarité cosinus Python pur.
+Le LLM reformule uniquement.
+Jamais le LLM ne cherche dans les docs.
+Si RAG vide → "Aucune procédure locale trouvée.
+Contacter l'ingénieur procédé."
+
+## 12. RÈGLE GÉNÉRALE REPORT
 
 La latence du rapport est acceptable.
-**Qualité > vitesse** pour le PDF.
-**Un appel LLM par spécialiste** (6a), puis un pour la synthèse (6b).
-Python agrège ; le LLM interprète.
+Qualité > vitesse pour le PDF.
+Un appel LLM par spécialiste.
+Python agrège, LLM interprète.
+15-20 minutes est acceptable pour un rapport premium.
 
-### RÈGLE MONITORING
+## 13. RÈGLE KPIs
 
-Monitoring planifié **Python pur** (z-score glissant).
-Le LLM n'est appelé **que si** z-score > 3 déclenche le pipeline.
+Tous les KPIs calculés Python pur TimescaleDB.
+Jamais calculés par le LLM.
+Jamais estimés ou approximés par le LLM.
+
+## 14. RÈGLE MONITORING
+
+Monitoring planifié Python pur.
+LLM appelé uniquement si z-score > 3.
 Jamais de surveillance continue via LLM.
+Le monitoring tourne même si LLM est down.
 
-### RÈGLE KPIs
+## 15. RÈGLE ACQUITTEMENT
 
-Tous les KPIs sont calculés en **Python pur** (TimescaleDB).
-**Jamais** calculés par le LLM.
+Chaque alerte acquittée enregistre :
+nom opérateur + timestamp milliseconde
++ commentaire obligatoire non vide
++ action corrective + SHA-256.
+Jamais d'acquittement anonyme.
+Jamais d'acquittement sans commentaire.
 
----
+## 16. RÈGLE VOCABULAIRE PROFILS
 
-## 10. CHECKLIST AVANT DE VALIDER UN AGENT
+operateur : zéro jargon statistique.
+Mots INTERDITS : z-score, zscore, écart-type,
+variance, p-value, shapiro, anova, médiane,
+percentile, sigma, UCL, LCL, Cpk, EWMA, CUSUM.
+→ Remplacer par : "valeur anormale", "hors norme",
+  "signal suspect", "dépassement"
 
-□ Le LLM retourne uniquement un JSON ?
-□ La validation Python vérifie les colonnes ?
-□ Le DataFrame original n'est jamais modifié ?
-□ Les erreurs sont catchées partout ?
-□ Le State LangGraph est mis à jour ?
-□ state["target_column"] est utilisé
-  (pas de colonne hardcodée) ?
-□ Le temps d'exécution est mesuré ?
-□ Le format de retour est correct ?
-□ Les NaN et infinis sont gérés ?
-□ Le timeout Ollama est configuré ?
+technicien : jargon technique acceptable.
+Pas de formules mathématiques brutes.
+Composant physique défaillant si possible.
 
----
+ingenieur : tout est permis.
+Méthodes, formules, seuils, paramètres, p-values.
 
-*Ce document doit être lu par Cursor
-avant de générer chaque agent IndustrIA.*
+directeur : impact business uniquement.
+Mots INTERDITS : z-score, zscore, UCL, LCL,
+Shapiro, ANOVA, p-value, EWMA, CUSUM.
+→ Utiliser : TRS, OEE, conformité EN9100,
+  coût, risque qualité, délai.
+
+## 17. RÈGLE FALLBACK
+
+Chaque agent LLM doit avoir un fallback template Python.
+Si LLM échoue 3 fois → fallback automatique sans crash.
+L'utilisateur voit toujours une réponse.
+Jamais d'erreur nue dans l'interface.
+Le fallback est meilleur qu'un crash.
+
+## 18. RÈGLE DATA/CONFIG
+
+Les paramètres métier (coûts, unités, seuils, golden batch)
+sont dans data/config.py UNIQUEMENT.
+Jamais hardcodés dans les agents.
+Jamais hardcodés dans les prompts.
+Les agents lisent config.py.
+
+## 19. RÈGLE OLLAMA
+
+OLLAMA_KEEP_ALIVE=-1 toujours configuré.
+File d'attente Lock FIFO obligatoire.
+1 seul appel LLM à la fois.
+Timeout 30 secondes par appel.
+Si timeout → fallback template.
+
+## 20. RÈGLE LICENCES
+
+core/ = Apache 2.0 (open source)
+enterprise/ = BSL 1.1 (commercial)
+Ne jamais mélanger les deux.
+Imports cross-licence interdits.
+
+## 21. RÈGLE SHA-256
+
+Le SHA-256 du rapport couvre TOUJOURS :
+question + json_compact + rapport_oapc + timestamp.
+Jamais un SHA-256 partiel pour un rapport EN9100.
+
+## 22. RÈGLE PDF COULEURS
+
+Zones de contrôle :
+±2σ = vert transparent (rgba(0,128,0,0.15))
+±3σ = rouge transparent (rgba(220,38,38,0.15))
+JAMAIS ±2σ en orange.
+Standard industriel non négociable.
+
+## 23. RÈGLE SCORES CAUSES
+
+Les scores de causes probables sont des indices /100.
+Ils sont INDÉPENDANTS par méthode.
+Ils ne somment JAMAIS à 100%.
+La note "Scores indépendants" est OBLIGATOIRE dans le PDF.
+JAMAIS présenter comme des probabilités classiques.
+
+## 24. RÈGLE MATCHING SÉMANTIQUE (S1)
+Matching question → entités YAML :
+1. Fuzzy matching Python (RapidFuzz)
+2. Similarité vectorielle (all-MiniLM-L6-v2)
+3. Fusion RRF des deux scores
+4. Score >= 0.85 → Python décide
+5. Score 0.70-0.85 → LLM 7b classe parmi candidats
+6. Score < 0.70 → demande clarification utilisateur
+JAMAIS le LLM ne génère une entité de toutes pièces.
+
+## 25. RÈGLE FIDÉLITÉ COMPOSITE (S5)
+Chiffre dans texte LLM vérifié contre calculs Python :
+- Écart < 1% → ACCEPT
+- Écart 1-5% avec "environ/~" → REVIEW → régénération
+- Écart > 5% ou absent des calculs → REJECT
+Rapport avec REJECT jamais publié.
+
+## 26. RÈGLE CLIENT CONTEXT
+client_config.yaml jamais lu directement dans un agent.
+Accès uniquement via ClientContext
+(systems/s1/client_context.py).
+ClientContext = seul point d'entrée du YAML.
+
+## 27. RÈGLE NOMMAGE SYSTÈMES v4.0
+Dans systems/s1/, les agents portent des noms
+explicites : agent_1_preprocessor, agent_2_entity_extractor.
+Ces numéros N'ONT AUCUN LIEN avec les numéros
+Agent 1/2/3/4/5/6 de la v3.0 dans AGENTS.md.

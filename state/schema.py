@@ -17,6 +17,7 @@ class AgentState(TypedDict):
 
     # Sortie Agent 2
     df_raw: Any  # pd.DataFrame
+    sql_query: str
 
     # Sortie Agent 3
     df_propre: Any  # pd.DataFrame
@@ -72,11 +73,20 @@ class AgentState(TypedDict):
     pdf_path: str
     analyses_history: list[dict]
 
+    # Sortie agents calcul rapport (Sprint 5)
+    kpis: dict
+    tendance: dict
+    heatmap: dict
+    impact_financier: dict
+    causes: list
+    rag_context: dict
+
     # Métadonnées pipeline
     errors: list[str]
     warnings: list[str]
     pipeline_start_time: float
     agents_called: list[str]
+    execution_times: dict
 
 
 def create_initial_state(question: str) -> AgentState:
@@ -100,6 +110,7 @@ def create_initial_state(question: str) -> AgentState:
         "target_column": "",
         "filters": {},
         "df_raw": None,
+        "sql_query": "",
         "df_propre": None,
         "df_anomalies": None,
         "cleaning_stats": {},
@@ -118,8 +129,15 @@ def create_initial_state(question: str) -> AgentState:
         "resume_executif": "",
         "pdf_path": "",
         "analyses_history": [],
+        "kpis": {},
+        "tendance": {},
+        "heatmap": {},
+        "impact_financier": {},
+        "causes": [],
+        "rag_context": {},
         "errors": [],
         "warnings": [],
         "pipeline_start_time": 0.0,
         "agents_called": [],
+        "execution_times": {},
     }

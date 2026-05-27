@@ -1,0 +1,89 @@
+client:
+  nom: "Test Generic"
+  site: "Lab"
+  secteur: "test"
+  langue: "fr"
+  version: "1.0"
+
+dataset:
+  format: "LONG"
+  source: "csv"
+  fichier: "data/test.csv"
+  separateur: ";"
+  encoding: "utf-8"
+
+  colonnes:
+    temps: "Date"
+    valeur: "Value"
+    tag: "Tag"
+    piece: "Piece"
+    operation: "Operation"
+    machine: "Machine"
+
+  operations_actives: ["USINAGE", "CONTROLE"]
+
+  modeles_actifs:
+    - "P-A100"
+    - "P-B200"
+
+  s1_parsing:
+    piece_patterns:
+      - '\b(P-[A-Z][0-9]{3})\b'
+    operations_synonymes:
+      USINAGE: [usinage, a l usinage, au usinage]
+      CONTROLE: [controle, contrôle, au controle]
+
+entites:
+  facteurs_analyse:
+    USINAGE:
+      machine:
+        description: "machine d usinage"
+        colonne: "Machine"
+        synonymes: [machine, poste]
+    COMMUN:
+      fournisseur:
+        description: "fournisseur matiere"
+        colonne: "Fournisseur"
+        synonymes: [fournisseur, origine]
+  groupes_variables:
+    USINAGE:
+      diametre:
+        description: "diametre usine"
+        pattern_tag: "DIA_*"
+        synonymes: [diametre, diamètre]
+    CONTROLE:
+      rugosite:
+        description: "rugosite mesuree"
+        pattern_tag: "RUG_*"
+        synonymes: [rugosite, rugosité]
+  intentions:
+    conformite:
+      description: "conformite aux tolerances"
+      synonymes: [conforme, conformes, cpk, qualite]
+    comparaison_groupes:
+      description: "comparer des groupes"
+      synonymes: [impact, comparer, entre]
+
+pieces:
+  P-A100:
+    description: "Piece test A"
+    operations:
+      USINAGE:
+        group_by_defaut: "Machine"
+        tags:
+          DIA_01: {lti: 9.9, lts: 10.1, nominal: 10.0, unite: "mm"}
+      CONTROLE:
+        group_by_defaut: "Machine"
+        tags:
+          RUG_01: {lti: 0.0, lts: 1.6, nominal: 0.8, unite: "um"}
+  P-B200:
+    description: "Piece test B"
+    operations:
+      USINAGE:
+        group_by_defaut: "Machine"
+        tags:
+          DIA_01: {lti: 19.9, lts: 20.1, nominal: 20.0, unite: "mm"}
+
+temps: {}
+profils: {}
+financier: {}

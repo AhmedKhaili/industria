@@ -545,15 +545,20 @@ Ne cite que les valeurs numériques présentes dans input_json.
         cleaned = re.sub(r"^\s*[-*]\s+", "", cleaned, flags=re.MULTILINE)
         return cleaned.strip()
 
-    def _allowed_numbers(self, json_compact: dict) -> set[float]:
-        """Collect numeric values permitted in generated text (±0.5 tolerance)."""
+    def _collect_numeric_allowed(
+        self,
+        json_compact: dict,
+        state: dict | None = None,
+    ) -> set[float]:
+        """Extrait tous les nombres autorisés (métriques + state), récursif."""
         allowed: set[float] = set()
 
         def register(number: float) -> None:
             allowed.add(number)
             allowed.add(float(round(number, 3)))
             allowed.add(float(round(number, 1)))
-            allowed.add(float(int(number)) if number == int(number) else number)
+            if number == int(number):
+                allowed.add(float(int(number)))
 
         def walk(value: Any) -> None:
             if isinstance(value, bool):
@@ -570,37 +575,42 @@ Ne cite que les valeurs numériques présentes dans input_json.
                     walk(nested)
 
         walk(json_compact)
+        if isinstance(state, dict):
+            for bucket in ("specialist_results", "validated_results"):
+                walk(state.get(bucket))
+            walk(state.get("intention"))
+            for text in (state.get("target_column"), state.get("question")):
+                if isinstance(text, str):
+                    for token in re.findall(r"\d+", text):
+                        register(float(token))
         return allowed
 
-    def _build_number_whitelist(self, json_compact: dict) -> set[float]:
-        """
-        Build numeric tokens allowed from column names (not invented metrics).
-
-        Rule 1: every digit group in ``target_column`` (e.g. inducteur_1 → 1).
-        Rule 2: integer groups between 1 and 10 in column names present in the compact JSON.
-        """
+    def _build_number_whitelist(
+        self,
+        json_compact: dict,
+        state: dict | None = None,
+    ) -> set[float]:
+        """Chiffres issus des noms de colonnes / cible / question."""
         whitelist: set[float] = set()
-        column_names: list[str] = []
+        names: list[str] = []
 
-        target_column = json_compact.get("target_column")
-        if isinstance(target_column, str) and target_column.strip():
-            column_names.append(target_column.strip())
+        for key in ("target_column", "target"):
+            val = json_compact.get(key)
+            if isinstance(val, str) and val.strip():
+                names.append(val.strip())
 
-        for value in json_compact.values():
-            if not isinstance(value, str):
-                continue
-            if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", value) and value not in column_names:
-                column_names.append(value)
+        if isinstance(state, dict):
+            tc = state.get("target_column")
+            if isinstance(tc, str) and tc.strip():
+                names.append(tc.strip())
+            q = state.get("question")
+            if isinstance(q, str):
+                for token in re.findall(r"\d+", q):
+                    whitelist.add(float(token))
 
-        if isinstance(target_column, str):
-            for token in re.findall(r"\d+", target_column):
-                whitelist.add(float(token))
-
-        for name in column_names:
+        for name in names:
             for token in re.findall(r"\d+", name):
-                number = float(token)
-                if 1.0 <= number <= 10.0 and number == int(number):
-                    whitelist.add(number)
+                whitelist.add(float(token))
 
         return whitelist
 
@@ -650,6 +660,7 @@ Ne cite que les valeurs numériques présentes dans input_json.
         text: str,
         json_compact: dict,
         user_profile: str,
+        state: dict | None = None,
     ) -> dict:
         """
         Validate LLM output: flexible form, strict content.
@@ -677,24 +688,28 @@ Ne cite que les valeurs numériques présentes dans input_json.
             if word.lower() in lowered_text:
                 return {"valid": False, "error": f"mot interdit: {word}"}
 
-        allowed_numbers = self._allowed_numbers(json_compact)
-        number_whitelist = self._build_number_whitelist(json_compact)
-        text_for_numbers = re.sub(r"\bP\s*[1-4]\b", "", normalized, flags=re.IGNORECASE)
-        for match in _NUMBER_TOKEN_RE.findall(text_for_numbers):
-            normalized_number = match.replace(",", ".")
-            try:
-                number = float(normalized_number)
-            except ValueError:
-                continue
-            if not self._number_is_allowed(
-                number,
-                allowed_numbers,
-                number_whitelist,
-            ):
-                return {
-                    "valid": False,
-                    "error": f"chiffre inventé: {match}",
-                }
+        allowed_numbers = self._collect_numeric_allowed(json_compact, state)
+        number_whitelist = self._build_number_whitelist(json_compact, state)
+        combined = allowed_numbers | number_whitelist
+        if combined:
+            text_for_numbers = re.sub(
+                r"\bP\s*[1-4]\b", "", normalized, flags=re.IGNORECASE
+            )
+            for match in _NUMBER_TOKEN_RE.findall(text_for_numbers):
+                normalized_number = match.replace(",", ".")
+                try:
+                    number = float(normalized_number)
+                except ValueError:
+                    continue
+                if not self._number_is_allowed(
+                    number,
+                    allowed_numbers,
+                    number_whitelist,
+                ):
+                    return {
+                        "valid": False,
+                        "error": f"chiffre inventé: {match}",
+                    }
 
         return {"valid": True}
 
@@ -799,6 +814,7 @@ Ne cite que les valeurs numériques présentes dans input_json.
                         raw_text,
                         json_compact,
                         user_profile,
+                        state,
                     )
                     if validation["valid"]:
                         break
@@ -810,7 +826,7 @@ Ne cite que les valeurs numériques présentes dans input_json.
                     )
 
             final_validation = (
-                self._validate_output(raw_text, json_compact, user_profile)
+                self._validate_output(raw_text, json_compact, user_profile, state)
                 if raw_text
                 else {"valid": False}
             )

@@ -216,3 +216,11 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# IndustrIA — données locales (ITAR / volumétrie)
+data/lisi_capteurs.csv
+data/cache/
+data/chroma_db/
+reports/*.pdf
+reports/
+enterprise/agents/*_backup.py

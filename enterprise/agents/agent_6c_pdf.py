@@ -1,3 +1,10 @@
+"""
+Agent 6c — constructeur PDF premium 12 sections (ReportLab).
+Python pur — zéro LLM.
+"""
+
+from __future__ import annotations
+
 import hashlib
 import io
 import json
@@ -8,15 +15,11 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-import numpy as np
 import pandas as pd
-import plotly.graph_objects as go
-import plotly.io as pio  # noqa: F401 — export kaleido
 from reportlab.lib import colors
-from reportlab.lib.enums import TA_CENTER, TA_JUSTIFY, TA_LEFT, TA_RIGHT
+from reportlab.lib.enums import TA_CENTER, TA_LEFT
 from reportlab.lib.pagesizes import A4
-from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
-from reportlab.lib.units import cm
+from reportlab.lib.units import mm
 from reportlab.pdfgen import canvas as pdf_canvas
 from reportlab.platypus import (
     HRFlowable,
@@ -34,95 +37,46 @@ _ROOT = Path(__file__).resolve().parent.parent.parent
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
-from state.schema import AgentState
+from data.config import OLLAMA_CONFIG
+from enterprise.report.charts import build_timeseries
+from enterprise.report.formatters import (
+    format_dict,
+    format_list,
+    format_number,
+    format_percentage,
+    format_timestamp,
+    format_value,
+    sanitize_for_pdf,
+)
+from enterprise.report.styles import (
+    COLORS,
+    PAGE_MARGIN,
+    build_styles,
+    draw_footer,
+    draw_header,
+    get_table_style,
+)
 
 logger = logging.getLogger(__name__)
 
 _VERSION = "IndustrIA v2.1"
-_MARGIN = 1.2 * cm
-_CONTENT_WIDTH = A4[0] - 2 * _MARGIN
+_CONTENT_WIDTH = A4[0] - 2 * PAGE_MARGIN
+_TOP_MARGIN = PAGE_MARGIN + 14 * mm
+_BOTTOM_MARGIN = PAGE_MARGIN + 12 * mm
 
-COULEURS = {
-    "P1": colors.HexColor("#DC2626"),
-    "P2": colors.HexColor("#EA580C"),
-    "P3": colors.HexColor("#CA8A04"),
-    "P4": colors.HexColor("#16A34A"),
-    "header": colors.HexColor("#1E3A5F"),
-    "light_blue": colors.HexColor("#EBF4FF"),
-    "light_gray": colors.HexColor("#F8F9FA"),
-    "border": colors.HexColor("#DEE2E6"),
-    "text_dark": colors.HexColor("#212529"),
-    "text_gray": colors.HexColor("#6C757D"),
-    "success": colors.HexColor("#16A34A"),
-    "warning": colors.HexColor("#CA8A04"),
-    "danger": colors.HexColor("#DC2626"),
-    "oapc_observer": colors.HexColor("#DBEAFE"),
-    "oapc_analyser": colors.HexColor("#F1F5F9"),
-    "oapc_prescrire": colors.HexColor("#FFEDD5"),
-    "oapc_certifier": colors.HexColor("#DCFCE7"),
-    "verdict_p1": colors.HexColor("#FEE2E2"),
-    "verdict_p2": colors.HexColor("#FFEDD5"),
-    "verdict_p3": colors.HexColor("#FEF9C3"),
-    "verdict_p4": colors.HexColor("#DCFCE7"),
+_VERDICT_TEXT = {
+    "P4": ("✅ GO — Procédé sous contrôle", "verdict_go"),
+    "P3": ("⚠️ SURVEILLANCE REQUISE", "verdict_go"),
+    "P2": ("🔴 INTERVENTION URGENTE", "verdict_nogo"),
+    "P1": ("🛑 ARRÊT IMMÉDIAT", "verdict_nogo"),
 }
 
-VERDICT_PRODUCTION = {
-    "P1": {
-        "bg": COULEURS["verdict_p1"],
-        "border": COULEURS["P1"],
-        "text": "ARRET PRODUCTION REQUIS",
-        "style": "critical_text",
-    },
-    "P2": {
-        "bg": COULEURS["verdict_p2"],
-        "border": COULEURS["P2"],
-        "text": (
-            "PRODUCTION AUTORISEE avec surveillance renforcee. "
-            "Intervention &lt; 30 min"
-        ),
-        "style": "warning_text",
-    },
-    "P3": {
-        "bg": COULEURS["verdict_p3"],
-        "border": COULEURS["P3"],
-        "text": "PRODUCTION AUTORISEE — Surveillance requise",
-        "style": "warning_text",
-    },
-    "P4": {
-        "bg": COULEURS["verdict_p4"],
-        "border": COULEURS["P4"],
-        "text": "PRODUCTION NORMALE — Surveillance standard",
-        "style": "body",
-    },
+_DELAIS = {
+    "P1": "Immédiat",
+    "P2": "< 30 minutes",
+    "P3": "< 4 heures",
+    "P4": "Prochaine maintenance",
 }
-
-DELAIS = {
-    "P1": "ARRET IMMEDIAT requis",
-    "P2": "Intervention &lt; 30 minutes",
-    "P3": "Intervention &lt; 4 heures",
-    "P4": "Prochaine maintenance planifiee",
-}
-
-RESPONSABLES: dict[str, Any] = {
-    "P1": "Chef d'atelier + Responsable securite",
-    "P2": {
-        "operateur": "Technicien maintenance",
-        "technicien": "Technicien maintenance",
-        "ingenieur": "Ingenieur process",
-        "directeur": "Directeur production",
-    },
-    "P3": "Technicien maintenance",
-    "P4": "Operateur terrain",
-}
-
-CONFIDENCE_STYLES = {
-    "haute": ("Confiance : HAUTE", COULEURS["verdict_p4"], COULEURS["P4"]),
-    "moyenne": ("Confiance : MOYENNE", COULEURS["verdict_p2"], COULEURS["P3"]),
-    "faible": ("Confiance : FAIBLE", COULEURS["verdict_p1"], COULEURS["P1"]),
-}
-
-_COUT_HORAIRE_DEFAULT = 500
-_IMPACT_HEURES = {"P1": 8.0, "P2": 2.0, "P3": 0.5, "P4": 0.0}
 
 _AGENT_CANONICAL = {
     "ZScoreSpecialist": "zscore",
@@ -147,20 +101,11 @@ _AGENT_CANONICAL = {
     "fourier": "fourier",
 }
 
-_TECHNICIAN_METRIC_KEYS = (
-    "anomalies_count",
-    "max_zscore",
-    "pourcentage_anomalies",
-    "sous_controle",
-    "derive_detectee",
-    "Cpk",
-    "UCL_x",
-    "hors_limites_x",
-)
+_CAUSES_NOTE = "Scores indépendants /100 — ne somment pas à 100%"
 
 
 class _NumberedCanvas(pdf_canvas.Canvas):
-    """Canvas that paints Page X / Y on every page after layout is known."""
+    """Canvas pour en-tête/pied avec numéro de page total."""
 
     def __init__(self, *args, page_callback=None, **kwargs):
         super().__init__(*args, **kwargs)
@@ -177,1230 +122,985 @@ class _NumberedCanvas(pdf_canvas.Canvas):
             self.__dict__.update(state)
             if self._page_callback:
                 self._page_callback(self, total)
-            super().showPage()
-        super().save()
+            pdf_canvas.Canvas.showPage(self)
+        pdf_canvas.Canvas.save(self)
 
 
-class PDFReportAgent:
-    """Agent 6c — premium industrial PDF (ReportLab + Plotly), no LLM."""
+class Agent6cPDF:
+    """Assemble le rapport PDF premium 12 sections depuis l'AgentState."""
 
     def __init__(self) -> None:
-        self._page_meta: dict[str, str] = {}
-        self._total_pages: int = 1
-
-    def _canonical_agent(self, agent_name: str | None) -> str:
-        if not isinstance(agent_name, str):
-            return ""
-        return _AGENT_CANONICAL.get(agent_name, agent_name.strip())
-
-    def _find_validated(
-        self,
-        validated_results: list[dict],
-        specialist_name: str,
-    ) -> dict | None:
-        for item in validated_results:
-            if not isinstance(item, dict):
-                continue
-            agent = item.get("agent", "")
-            if agent == specialist_name:
-                return item
-            if self._canonical_agent(agent) == self._canonical_agent(specialist_name):
-                return item
-        return None
-
-    def _priority_color(self, priority: str):
-        return COULEURS.get(priority, COULEURS["P4"])
-
-    def _get_responsable(self, priority: str, user_profile: str) -> str:
-        entry = RESPONSABLES.get(priority, "Responsable atelier")
-        if isinstance(entry, dict):
-            return str(entry.get(user_profile, entry.get("technicien", "")))
-        return str(entry)
-
-    def _state_label(self, state: dict, *keys: str, default: str = "N/A") -> str:
-        """Return first non-empty state value among keys."""
-        for key in keys:
-            value = state.get(key)
-            if value is not None and str(value).strip():
-                return str(value).strip()
-        return default
-
-    def _draw_page_frame(self, canv: pdf_canvas.Canvas, total_pages: int) -> None:
-        """Header and footer on each page."""
-        self._total_pages = max(1, total_pages)
-        meta = self._page_meta
-        page_num = canv.getPageNumber()
-        w, h = A4
-
-        canv.setStrokeColor(COULEURS["border"])
-        canv.setLineWidth(0.4)
-        canv.line(_MARGIN, h - 1.35 * cm, w - _MARGIN, h - 1.35 * cm)
-        canv.line(_MARGIN, 1.15 * cm, w - _MARGIN, 1.15 * cm)
-
-        canv.setFont("Helvetica", 8)
-        canv.setFillColor(COULEURS["text_gray"])
-        canv.drawString(_MARGIN, h - 1.05 * cm, _VERSION)
-        canv.drawRightString(w - _MARGIN, h - 1.05 * cm, meta.get("datetime", ""))
-
-        canv.drawCentredString(w / 2, 0.75 * cm, f"Page {page_num} / {total_pages}")
-        canv.drawRightString(w - _MARGIN, 0.75 * cm, meta.get("sha_short", ""))
-
-    def _build_styles(self) -> dict[str, ParagraphStyle]:
-        base = getSampleStyleSheet()
-        header = COULEURS["header"]
-        text_dark = COULEURS["text_dark"]
-        text_gray = COULEURS["text_gray"]
-
-        return {
-            "title_main": ParagraphStyle(
-                "title_main", parent=base["Title"],
-                fontSize=22, leading=26, alignment=TA_CENTER,
-                textColor=header, fontName="Helvetica-Bold", spaceAfter=2,
-            ),
-            "title_section": ParagraphStyle(
-                "title_section", parent=base["Heading2"],
-                fontSize=13, leading=16, textColor=header,
-                fontName="Helvetica-Bold", spaceBefore=4, spaceAfter=4,
-            ),
-            "title_subsection": ParagraphStyle(
-                "title_subsection", parent=base["Heading3"],
-                fontSize=10, leading=13, textColor=text_dark,
-                fontName="Helvetica-Bold", spaceBefore=2, spaceAfter=2,
-            ),
-            "body": ParagraphStyle(
-                "body", parent=base["Normal"],
-                fontSize=9.5, leading=12, alignment=TA_JUSTIFY, textColor=text_dark,
-            ),
-            "body_small": ParagraphStyle(
-                "body_small", parent=base["Normal"],
-                fontSize=8.5, leading=11, textColor=text_dark,
-            ),
-            "oapc_observer": ParagraphStyle(
-                "oapc_observer", parent=base["Normal"],
-                fontSize=8.5, leading=11, fontName="Helvetica-Oblique", textColor=text_dark,
-            ),
-            "oapc_prescrire": ParagraphStyle(
-                "oapc_prescrire", parent=base["Normal"],
-                fontSize=9, leading=12, fontName="Helvetica-Bold", textColor=text_dark,
-            ),
-            "caption": ParagraphStyle(
-                "caption", parent=base["Normal"],
-                fontSize=7.5, leading=9, alignment=TA_CENTER, textColor=text_gray,
-            ),
-            "warning_text": ParagraphStyle(
-                "warning_text", parent=base["Normal"],
-                fontSize=9.5, leading=12, textColor=COULEURS["warning"],
-                fontName="Helvetica-Bold", alignment=TA_CENTER,
-            ),
-            "critical_text": ParagraphStyle(
-                "critical_text", parent=base["Normal"],
-                fontSize=10, leading=13, textColor=COULEURS["P1"],
-                fontName="Helvetica-Bold", alignment=TA_CENTER,
-            ),
-            "badge_white": ParagraphStyle(
-                "badge_white", parent=base["Normal"],
-                fontSize=11, alignment=TA_CENTER, textColor=colors.white,
-                fontName="Helvetica-Bold",
-            ),
-            "verdict_box": ParagraphStyle(
-                "verdict_box", parent=base["Normal"],
-                fontSize=10, leading=13, alignment=TA_CENTER,
-                fontName="Helvetica-Bold", textColor=text_dark,
-            ),
+        self.styles = build_styles()
+        self._total_pages = 1
+        self._doc_ref: SimpleDocTemplate | None = None
+        self._header_meta = {
+            "title": "Rapport d'Analyse Industrielle",
+            "machine": "N/A",
+            "timestamp": format_timestamp(datetime.now()),
         }
 
-    def _section_title(self, text: str, styles: dict) -> Paragraph:
-        return Paragraph(text, styles["title_section"])
-
-    def _thin_hr(self, color=None) -> HRFlowable:
-        return HRFlowable(
-            width="100%", thickness=0.5,
-            color=color or COULEURS["border"],
-            spaceBefore=2, spaceAfter=2,
-        )
-
-    def _production_verdict_box(self, priority: str, styles: dict) -> Table:
-        """Binary production verdict encart under priority badge."""
-        spec = VERDICT_PRODUCTION.get(priority, VERDICT_PRODUCTION["P4"])
-        prefix = ""
-        if priority == "P1":
-            prefix = "ARRET — "
-        elif priority == "P2":
-            prefix = "ATTENTION — "
-        elif priority in ("P3", "P4"):
-            prefix = "OK — "
-
-        text = prefix + spec["text"]
-        style_key = spec.get("style", "body")
-        cell = Paragraph(text, styles.get(style_key, styles["verdict_box"]))
-
-        table = Table([[cell]], colWidths=[_CONTENT_WIDTH])
-        table.setStyle(TableStyle([
-            ("BACKGROUND", (0, 0), (-1, -1), spec["bg"]),
-            ("BOX", (0, 0), (-1, -1), 1.2, spec["border"]),
-            ("TOPPADDING", (0, 0), (-1, -1), 10),
-            ("BOTTOMPADDING", (0, 0), (-1, -1), 10),
-            ("LEFTPADDING", (0, 0), (-1, -1), 8),
-            ("RIGHTPADDING", (0, 0), (-1, -1), 8),
-        ]))
-        return table
-
-    def _confidence_badge(self, confidence: str, styles: dict) -> Table | None:
-        """Display pipeline confidence level badge."""
-        if not confidence:
-            return None
-        key = str(confidence).strip().lower()
-        spec = CONFIDENCE_STYLES.get(key)
-        if not spec:
-            return None
-        label, bg, border = spec
-        cell = Table(
-            [[Paragraph(label, styles["badge_white"])]],
-            colWidths=[5 * cm],
-            hAlign="LEFT",
-        )
-        cell.setStyle(TableStyle([
-            ("BACKGROUND", (0, 0), (-1, -1), bg),
-            ("BOX", (0, 0), (-1, -1), 1, border),
-            ("TOPPADDING", (0, 0), (-1, -1), 6),
-            ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
-            ("ALIGN", (0, 0), (-1, -1), "CENTER"),
-        ]))
-        return cell
-
-    def _build_page_de_garde(
-        self,
-        state: dict,
-        rapport_oapc: dict,
-        styles: dict,
-    ) -> list:
-        priority = str(rapport_oapc.get("priority", "P4"))
-        priority_color = self._priority_color(priority)
-        question = str(state.get("question", ""))
-        target = str(state.get("target_column", ""))
-        user_profile = str(state.get("user_profile", "technicien"))
-        now_display = self._page_meta.get("datetime", "")
-        validated = state.get("validated_results", [])
-        n_specialistes = len(validated) if isinstance(validated, list) else 0
-
-        story: list = [
-            Spacer(1, 0.4 * cm),
-            Paragraph("IndustrIA", ParagraphStyle(
-                "brand", parent=styles["title_main"], fontSize=26,
-            )),
-            self._thin_hr(priority_color),
-            Paragraph("Rapport d'Analyse Industrielle", styles["title_main"]),
-            Spacer(1, 0.25 * cm),
-        ]
-
-        badge = Table(
-            [[Paragraph(f"PRIORITE {priority}", styles["badge_white"])]],
-            colWidths=[5 * cm],
-            hAlign="CENTER",
-        )
-        badge.setStyle(TableStyle([
-            ("BACKGROUND", (0, 0), (-1, -1), priority_color),
-            ("ALIGN", (0, 0), (-1, -1), "CENTER"),
-            ("TOPPADDING", (0, 0), (-1, -1), 8),
-            ("BOTTOMPADDING", (0, 0), (-1, -1), 8),
-        ]))
-        story.extend([
-            badge,
-            Spacer(1, 0.2 * cm),
-            self._production_verdict_box(priority, styles),
-            Spacer(1, 0.25 * cm),
-        ])
-
-        info_rows = [
-            ["Date / heure", now_display],
-            ["Question", question],
-            ["Capteur", target],
-            ["Profil", user_profile],
-            ["Specialistes", str(n_specialistes)],
-        ]
-        info_table = Table(info_rows, colWidths=[4.5 * cm, _CONTENT_WIDTH - 4.5 * cm])
-        info_table.setStyle(TableStyle([
-            ("FONTNAME", (0, 0), (0, -1), "Helvetica-Bold"),
-            ("FONTSIZE", (0, 0), (-1, -1), 9),
-            ("TEXTCOLOR", (0, 0), (0, -1), COULEURS["text_gray"]),
-            ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
-            ("LINEBELOW", (0, -1), (-1, -1), 0.25, COULEURS["border"]),
-        ]))
-        story.append(info_table)
-
-        context_rows = [
-            ["Contexte machine", ""],
-            ["N lot", self._state_label(state, "numero_lot", "num_lot", "lot_number")],
-            ["Operateur", self._state_label(state, "operateur", "operator_name")],
-            ["Recette active", self._state_label(state, "recette_active", "recette", "recipe")],
-        ]
-        ctx_table = Table(context_rows, colWidths=[4.5 * cm, _CONTENT_WIDTH - 4.5 * cm])
-        ctx_table.setStyle(TableStyle([
-            ("FONTNAME", (0, 0), (0, 0), "Helvetica-Bold"),
-            ("FONTSIZE", (0, 0), (-1, -1), 9),
-            ("BACKGROUND", (0, 0), (-1, 0), COULEURS["light_gray"]),
-            ("SPAN", (0, 0), (1, 0)),
-            ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
-            ("BOX", (0, 0), (-1, -1), 0.5, COULEURS["border"]),
-        ]))
-        story.extend([Spacer(1, 0.2 * cm), ctx_table, PageBreak()])
-        return story
-
-    def _oapc_cell(self, label: str, text: str, styles: dict, bg_color) -> Table:
-        label_p = Paragraph(f"<b>{label}</b>", styles["title_subsection"])
-        if label == "OBSERVER":
-            body_style = styles["oapc_observer"]
-        elif label == "PRESCRIRE":
-            body_style = styles["oapc_prescrire"]
-        else:
-            body_style = styles["body_small"]
-        inner = Table(
-            [[label_p], [Paragraph(text or "-", body_style)]],
-            colWidths=[(_CONTENT_WIDTH / 4) - 0.25 * cm],
-        )
-        inner.setStyle(TableStyle([
-            ("BACKGROUND", (0, 0), (-1, -1), bg_color),
-            ("BOX", (0, 0), (-1, -1), 0.5, COULEURS["border"]),
-            ("LEFTPADDING", (0, 0), (-1, -1), 5),
-            ("RIGHTPADDING", (0, 0), (-1, -1), 5),
-            ("TOPPADDING", (0, 0), (-1, -1), 5),
-            ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
-        ]))
-        return inner
-
-    def _build_section_resume(
-        self,
-        state: dict,
-        resume_executif: str,
-        rapport_oapc: dict,
-        styles: dict,
-    ) -> list:
-        story: list = [self._section_title("1. Resume executif", styles)]
-
-        conf_badge = self._confidence_badge(str(state.get("confidence", "")), styles)
-        if conf_badge:
-            story.extend([conf_badge, Spacer(1, 0.15 * cm)])
-
-        story.append(Paragraph(resume_executif or "-", styles["body"]))
-
-        col_w = _CONTENT_WIDTH / 4
-        oapc_cells = [
-            self._oapc_cell("OBSERVER", str(rapport_oapc.get("observer", "")), styles, COULEURS["oapc_observer"]),
-            self._oapc_cell("ANALYSER", str(rapport_oapc.get("analyser", "")), styles, COULEURS["oapc_analyser"]),
-            self._oapc_cell("PRESCRIRE", str(rapport_oapc.get("prescrire", "")), styles, COULEURS["oapc_prescrire"]),
-            self._oapc_cell("CERTIFIER", str(rapport_oapc.get("certifier", "")), styles, COULEURS["oapc_certifier"]),
-        ]
-        oapc_row = Table([oapc_cells], colWidths=[col_w] * 4)
-        oapc_row.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "TOP")]))
-        story.extend([Spacer(1, 0.2 * cm), oapc_row])
-        return story
-
-    def _plotly_chart_bytes(self, state: dict) -> bytes | None:
-        df = state.get("df_propre")
-        target = state.get("target_column", "")
-        if df is None or getattr(df, "empty", True):
-            return None
-        if not isinstance(target, str) or target not in df.columns:
-            return None
-
-        series = pd.to_numeric(df[target], errors="coerce")
-        if series.notna().sum() < 3:
-            return None
-
-        x_values = (
-            pd.to_datetime(df["timestamp"], errors="coerce")
-            if "timestamp" in df.columns
-            else pd.Series(range(len(df)), index=df.index)
-        )
-
-        rolling_mean = series.rolling(window=10, min_periods=1).mean()
-        rolling_std = series.rolling(window=10, min_periods=1).std().fillna(0.0)
-        ucl_2, lcl_2 = rolling_mean + 2 * rolling_std, rolling_mean - 2 * rolling_std
-        ucl_3, lcl_3 = rolling_mean + 3 * rolling_std, rolling_mean - 3 * rolling_std
-
-        figure = go.Figure()
-        figure.add_trace(go.Scatter(
-            x=x_values, y=lcl_3, mode="lines",
-            line=dict(color="rgba(0,0,0,0)"), showlegend=False, hoverinfo="skip",
-        ))
-        figure.add_trace(go.Scatter(
-            x=x_values, y=ucl_3, mode="lines", fill="tonexty",
-            fillcolor="rgba(220,38,38,0.15)",
-            line=dict(width=0), name="Zone +/-3 sigma",
-        ))
-        figure.add_trace(go.Scatter(
-            x=x_values, y=lcl_2, mode="lines",
-            line=dict(color="rgba(0,0,0,0)"), showlegend=False, hoverinfo="skip",
-        ))
-        figure.add_trace(go.Scatter(
-            x=x_values, y=ucl_2, mode="lines", fill="tonexty",
-            fillcolor="rgba(0,128,0,0.15)",
-            line=dict(width=0), name="Zone +/-2 sigma",
-        ))
-        figure.add_trace(go.Scatter(
-            x=x_values, y=series, mode="lines", name=target,
-            line=dict(color="#1D4ED8", width=2),
-        ))
-        figure.add_trace(go.Scatter(
-            x=x_values, y=rolling_mean, mode="lines",
-            name="Moyenne mobile (10)",
-            line=dict(color="#64748B", width=1.5, dash="dash"),
-        ))
-
-        df_anomalies = state.get("df_anomalies")
-        if (
-            df_anomalies is not None
-            and not getattr(df_anomalies, "empty", True)
-            and target in df_anomalies.columns
-        ):
-            anomaly_y = pd.to_numeric(df_anomalies[target], errors="coerce")
-            anomaly_x = (
-                pd.to_datetime(df_anomalies["timestamp"], errors="coerce")
-                if "timestamp" in df_anomalies.columns
-                else df_anomalies.index
-            )
-            figure.add_trace(go.Scatter(
-                x=anomaly_x, y=anomaly_y, mode="markers", name="Anomalies",
-                marker=dict(color="#DC2626", size=11, symbol="x", line=dict(width=2)),
-            ))
-
-        figure.update_layout(
-            template="plotly_white",
-            paper_bgcolor="white",
-            plot_bgcolor="white",
-            xaxis_title="Temps",
-            yaxis_title=f"{target} (valeur brute)",
-            legend=dict(orientation="h", yanchor="bottom", y=1.02, x=1),
-            margin=dict(l=44, r=20, t=36, b=40),
-            width=800,
-            height=400,
-        )
-
-        try:
-            return figure.to_image(format="png", scale=2)
-        except Exception:
-            logger.exception("Plotly/kaleido PNG export failed")
-            return None
-
-    def _build_section_graphique(
-        self,
-        state: dict,
-        styles: dict,
-    ) -> list:
-        block: list = [self._section_title("2. Graphique principal", styles)]
-        png_bytes = self._plotly_chart_bytes(state)
-
-        if png_bytes:
-            chart = Image(io.BytesIO(png_bytes), width=_CONTENT_WIDTH, height=8 * cm)
-            legend = Paragraph(
-                "Zone verte +/-2 sigma = variation normale. "
-                "Zone rouge +/-3 sigma = hors controle. "
-                "Croix rouges = anomalies detectees.",
-                styles["caption"],
-            )
-            return block + [KeepTogether([chart, legend])]
-
-        block.append(Paragraph(
-            "Donnees insuffisantes pour generer le graphique.",
-            styles["body"],
-        ))
-        return block
-
-    def _format_metric_value(self, key: str, value: Any) -> list[tuple[str, str]]:
-        """Expand one metric into human-readable rows (no raw dict JSON)."""
-        if key == "tendance" and isinstance(value, dict):
-            rows = []
-            if "direction" in value:
-                rows.append(("tendance_direction", str(value["direction"])))
-            if "slope" in value:
-                rows.append(("tendance_pente", f"{value['slope']:.4f}"))
-            if "significative" in value:
-                rows.append(("tendance_significative", str(value["significative"])))
-            return rows or [("tendance", "presente")]
-
-        if key == "ewma" and isinstance(value, dict):
-            rows = []
-            if "alertes_count" in value:
-                rows.append(("ewma_alertes", str(value["alertes_count"])))
-            if "premier_alerte" in value:
-                rows.append(("ewma_premiere_alerte", str(value["premier_alerte"])))
-            return rows or [("ewma", "alerte active")]
-
-        if key == "meilleure_variable" and isinstance(value, dict):
-            rows = []
-            if "variable" in value:
-                rows.append(("variable", str(value["variable"])))
-            if "r_squared" in value:
-                rows.append(("r_squared", f"{value['r_squared']:.4f}"))
-            return rows
-
-        if key == "global" and isinstance(value, dict):
-            return [(f"global_{k}", str(v)) for k, v in value.items() if k in ("mean", "std", "min", "max")]
-
-        if key == "hors_limites_x" and isinstance(value, list):
-            return [("hors_limites_x", f"{len(value)} points")]
-
-        if key == "correlation_max" and isinstance(value, dict):
-            rows = []
-            for sub in ("colonne", "pearson_r", "spearman_r"):
-                if sub in value:
-                    rows.append((f"correlation_{sub}", str(value[sub])))
-            return rows
-
-        if isinstance(value, bool):
-            return [(key, "Oui" if value else "Non")]
-
-        if isinstance(value, list):
-            return [(key, f"{len(value)} elements")]
-
-        if isinstance(value, dict):
-            return [(key, "voir detail annexe")]
-
-        return [(key, str(value))]
-
-    def _flatten_metrics_formatted(self, payload: dict) -> list[tuple[str, str]]:
-        rows: list[tuple[str, str]] = []
-        if not isinstance(payload, dict):
-            return rows
-        for key, value in payload.items():
-            rows.extend(self._format_metric_value(key, value))
-        return rows
-
-    def _verdict_row(self, validated: dict | None) -> tuple[str, str]:
-        if not validated:
-            return ("Verdict", "Non determine")
-        payload = validated.get("result", {})
-        if not isinstance(payload, dict):
-            return ("Anomalie", "Non")
-        if payload.get("anomalie_process_count", 0) or payload.get("anomalies_count", 0):
-            return ("Anomalie", "Oui")
-        if payload.get("derive_detectee") or not payload.get("sous_controle", True):
-            return ("Anomalie", "Oui")
-        return ("Anomalie", "Non")
-
-    def _directeur_rows(self, rapport_oapc: dict) -> list[tuple[str, str]]:
-        priority = rapport_oapc.get("priority", "P4")
-        rows = [("Priorite", str(priority))]
-        if priority in ("P1", "P2"):
-            rows.append(("Impact", "Risque conformite EN9100 / TRS"))
-        else:
-            rows.append(("Impact", "Surveillance standard"))
-        return rows[:2]
-
-    def _technician_rows(self, payload: dict) -> list[tuple[str, str]]:
-        rows: list[tuple[str, str]] = []
-        for key in _TECHNICIAN_METRIC_KEYS:
-            if key not in payload:
-                continue
-            rows.extend(self._format_metric_value(key, payload[key]))
-            if len(rows) >= 3:
-                return rows[:3]
-        return rows[:3] if rows else self._flatten_metrics_formatted(payload)[:3]
-
-    def _metrics_table(self, rows: list[tuple[str, str]], styles: dict) -> Table | None:
-        if not rows:
-            return None
-        data = [["Metrique", "Valeur"]] + [[k, v] for k, v in rows]
-        table = Table(data, colWidths=[5.5 * cm, _CONTENT_WIDTH - 5.5 * cm])
-        table.setStyle(TableStyle([
-            ("BACKGROUND", (0, 0), (-1, 0), COULEURS["light_gray"]),
-            ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
-            ("FONTSIZE", (0, 0), (-1, -1), 8.5),
-            ("GRID", (0, 0), (-1, -1), 0.25, COULEURS["border"]),
-            ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, COULEURS["light_blue"]]),
-        ]))
-        return table
-
-    def _top3_anomalies_table(self, state: dict, styles: dict) -> Table | None:
-        """Top 3 anomalies with timestamp from df_anomalies."""
-        df_anomalies = state.get("df_anomalies")
-        target = state.get("target_column", "")
-        if (
-            df_anomalies is None
-            or getattr(df_anomalies, "empty", True)
-            or not isinstance(target, str)
-            or target not in df_anomalies.columns
-        ):
-            return None
-
-        work = df_anomalies.head(3).copy()
-        rows = [["Timestamp", "Valeur", "Type anomalie"]]
-        for _, row in work.iterrows():
-            ts = row.get("timestamp", "")
-            if hasattr(ts, "strftime"):
-                ts_str = ts.strftime("%Y-%m-%d %H:%M:%S")
-            else:
-                ts_str = str(ts)
-            val = row.get(target, "")
-            try:
-                val_str = f"{float(val):.2f}"
-            except (TypeError, ValueError):
-                val_str = str(val)
-            rows.append([ts_str, val_str, "Process"])
-
-        if len(rows) <= 1:
-            return None
-
-        table = Table(rows, colWidths=[6 * cm, 4 * cm, _CONTENT_WIDTH - 10 * cm])
-        table.setStyle(TableStyle([
-            ("BACKGROUND", (0, 0), (-1, 0), COULEURS["header"]),
-            ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
-            ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
-            ("FONTSIZE", (0, 0), (-1, -1), 8.5),
-            ("GRID", (0, 0), (-1, -1), 0.25, COULEURS["border"]),
-        ]))
-        return table
-
-    def _build_section_interpretations(
-        self,
-        state: dict,
-        interpretations: dict,
-        validated_results: list,
-        user_profile: str,
-        styles: dict,
-        rapport_oapc: dict,
-    ) -> list:
-        story: list = [
-            PageBreak(),
-            self._section_title("3. Interpretations", styles),
-        ]
-        if not interpretations:
-            story.append(Paragraph("Aucune interpretation disponible.", styles["body"]))
-            return story
-
-        for specialist_name, interpretation_text in interpretations.items():
-            validated = self._find_validated(validated_results, specialist_name)
-            judge_ok = bool(validated.get("judge_valid", True)) if validated else True
-
-            block: list = [
-                Paragraph(specialist_name, styles["title_subsection"]),
-            ]
-
-            if not judge_ok:
-                block.append(Paragraph(
-                    "Resultat non retenu",
-                    styles["critical_text"],
-                ))
-            else:
-                block.append(Paragraph(str(interpretation_text), styles["body"]))
-                payload = {}
-                if validated and isinstance(validated.get("result"), dict):
-                    payload = validated["result"]
-
-                metric_rows: list[tuple[str, str]] = []
-                if user_profile == "operateur":
-                    metric_rows = [self._verdict_row(validated)]
-                elif user_profile == "technicien":
-                    metric_rows = self._technician_rows(payload)
-                elif user_profile == "ingenieur":
-                    metric_rows = self._flatten_metrics_formatted(payload)
-                elif user_profile == "directeur":
-                    metric_rows = [self._verdict_row(validated)]
-                    metric_rows.extend(self._directeur_rows(rapport_oapc))
-
-                metrics_table = self._metrics_table(metric_rows, styles)
-                if metrics_table:
-                    block.append(metrics_table)
-
-                if (
-                    judge_ok
-                    and self._canonical_agent(specialist_name) == "zscore"
-                ):
-                    top3 = self._top3_anomalies_table(state, styles)
-                    if top3:
-                        block.extend([
-                            Paragraph("Top 3 anomalies", styles["title_subsection"]),
-                            top3,
-                        ])
-
-            block.append(self._thin_hr())
-            story.append(KeepTogether(block))
-
-        return story
-
-    def _compute_causes(self, validated_results: list[dict]) -> list[dict]:
-        causes: list[dict] = []
-        for item in validated_results:
-            if not isinstance(item, dict) or item.get("status") != "success":
-                continue
-            if item.get("judge_valid") is False:
-                continue
-            agent = self._canonical_agent(item.get("agent"))
-            payload = item.get("result", {})
-            if not isinstance(payload, dict):
-                continue
-
-            if agent == "zscore":
-                total = float(payload.get("total_points", 0) or 0)
-                process_count = float(payload.get("anomalie_process_count", 0) or 0)
-                bruit_count = float(payload.get("bruit_capteur_count", 0) or 0)
-                pct = float(payload.get("pourcentage_anomalies", 0) or 0)
-                if process_count > 0:
-                    causes.append({
-                        "cause": "Anomalie process detectee",
-                        "indice": round(min(pct * 2, 85), 1),
-                        "agent": agent,
-                    })
-                if bruit_count > 0 and total > 0:
-                    causes.append({
-                        "cause": "Bruit capteur",
-                        "indice": round(min(bruit_count / total * 100, 60), 1),
-                        "agent": agent,
-                    })
-            elif agent == "spc" and not bool(payload.get("sous_controle", True)):
-                causes.append({
-                    "cause": "Processus hors controle SPC",
-                    "indice": 75.0,
-                    "agent": agent,
-                })
-            elif agent == "ewma_cusum" and bool(payload.get("derive_detectee", False)):
-                causes.append({
-                    "cause": "Derive progressive EWMA/CUSUM",
-                    "indice": 70.0,
-                    "agent": agent,
-                })
-            elif agent == "cp_cpk":
-                cpk = float(payload.get("Cpk", 999))
-                if cpk < 1.33:
-                    causes.append({
-                        "cause": "Capabilite insuffisante",
-                        "indice": 80.0,
-                        "agent": agent,
-                    })
-            elif agent == "regression":
-                meilleure = payload.get("meilleure_variable")
-                if isinstance(meilleure, dict):
-                    variable = meilleure.get("variable", "")
-                    r_squared = float(meilleure.get("r_squared", 0) or 0)
-                    if variable and r_squared > 0.5:
-                        causes.append({
-                            "cause": f"Correlation avec {variable}",
-                            "indice": round(min(r_squared * 100, 95), 1),
-                            "agent": agent,
-                        })
-
-        causes.sort(key=lambda row: row["indice"], reverse=True)
-        return causes[:5]
-
-    def _confidence_bar(self, score: float) -> Table:
-        score = max(0.0, min(float(score), 100.0))
-        bar_color = COULEURS["P4"]
-        if score < 50:
-            bar_color = COULEURS["P1"]
-        elif score < 75:
-            bar_color = COULEURS["P3"]
-
-        filled = max(0.05 * cm, (score / 100.0) * 5 * cm)
-        empty = max(0.05 * cm, 5 * cm - filled)
-        bar = Table([["", ""]], colWidths=[filled, empty], rowHeights=[0.4 * cm])
-        bar.setStyle(TableStyle([
-            ("BACKGROUND", (0, 0), (0, 0), bar_color),
-            ("BACKGROUND", (1, 0), (1, 0), COULEURS["light_gray"]),
-            ("BOX", (0, 0), (-1, -1), 0.25, COULEURS["border"]),
-        ]))
-        return bar
-
-    def _build_section_causes(
-        self,
-        validated_results: list,
-        styles: dict,
-    ) -> list:
-        story: list = [
-            Spacer(1, 0.15 * cm),
-            self._section_title("4. Causes probables", styles),
-        ]
-        causes = self._compute_causes(validated_results)
-
-        if not causes:
-            story.append(Paragraph(
-                "Aucune cause identifiee automatiquement.",
-                styles["body"],
-            ))
-        else:
-            table_data = [["Cause", "Indice de confiance (/100)", "Agent"]]
-            for item in causes:
-                indice = float(item.get("indice", 0))
-                bar_cell = Table(
-                    [
-                        [self._confidence_bar(indice)],
-                        [Paragraph(f"{indice:.0f}", styles["caption"])],
-                    ],
-                    colWidths=[5.2 * cm],
-                )
-                table_data.append([
-                    item.get("cause", ""),
-                    bar_cell,
-                    item.get("agent", ""),
-                ])
-            cause_table = Table(
-                table_data,
-                colWidths=[7.8 * cm, 5.5 * cm, 2.2 * cm],
-            )
-            cause_table.setStyle(TableStyle([
-                ("BACKGROUND", (0, 0), (-1, 0), COULEURS["header"]),
-                ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
-                ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
-                ("FONTSIZE", (0, 0), (-1, -1), 8.5),
-                ("GRID", (0, 0), (-1, -1), 0.25, COULEURS["border"]),
-                ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-                ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, COULEURS["light_gray"]]),
-            ]))
-            story.append(cause_table)
-
-        story.append(Paragraph(
-            "<i>Scores independants par methode. Ne se somment pas.</i>",
-            styles["caption"],
-        ))
-        return story
-
-    def _estimate_financial_impact(self, priority: str) -> tuple[float, float]:
-        heures = _IMPACT_HEURES.get(priority, 0.0)
-        impact = _COUT_HORAIRE_DEFAULT * heures
-        return impact, heures
-
-    def _build_section_recommandation(
-        self,
-        rapport_oapc: dict,
-        user_profile: str,
-        styles: dict,
-    ) -> list:
-        priority = str(rapport_oapc.get("priority", "P4"))
-        priority_color = self._priority_color(priority)
-        prescrire = str(rapport_oapc.get("prescrire", ""))
-
-        story: list = [
-            Spacer(1, 0.15 * cm),
-            self._section_title("5. Recommandation", styles),
-        ]
-
-        prescrire_table = Table(
-            [[Paragraph(prescrire or "-", ParagraphStyle(
-                "prescrire_big", parent=styles["oapc_prescrire"],
-                fontSize=11, leading=14,
-            ))]],
-            colWidths=[_CONTENT_WIDTH],
-        )
-        prescrire_table.setStyle(TableStyle([
-            ("BACKGROUND", (0, 0), (-1, -1), COULEURS["light_blue"]),
-            ("BOX", (0, 0), (-1, -1), 1, priority_color),
-            ("LEFTPADDING", (0, 0), (-1, -1), 8),
-            ("RIGHTPADDING", (0, 0), (-1, -1), 8),
-            ("TOPPADDING", (0, 0), (-1, -1), 8),
-            ("BOTTOMPADDING", (0, 0), (-1, -1), 8),
-        ]))
-        story.append(prescrire_table)
-
-        delai = DELAIS.get(priority, DELAIS["P4"])
-        responsable = self._get_responsable(priority, user_profile)
-        delay_table = Table(
-            [["Delai", delai], ["Responsable", responsable]],
-            colWidths=[3.5 * cm, _CONTENT_WIDTH - 3.5 * cm],
-        )
-        delay_table.setStyle(TableStyle([
-            ("FONTNAME", (0, 0), (0, -1), "Helvetica-Bold"),
-            ("FONTSIZE", (0, 0), (-1, -1), 9),
-            ("GRID", (0, 0), (-1, -1), 0.25, COULEURS["border"]),
-            ("BACKGROUND", (0, 0), (0, -1), COULEURS["light_gray"]),
-        ]))
-        story.append(delay_table)
-
-        impact, heures = self._estimate_financial_impact(priority)
-        if heures > 0:
-            story.append(Paragraph(
-                f"<b>Impact estime si non traite :</b> {impact:,.0f} EUR "
-                f"(arret ligne estime {heures:.1f} h).",
-                styles["body"],
-            ))
-            story.append(Paragraph(
-                "<i>Estimation indicative. Adapter au cout reel de l'usine.</i>",
-                styles["caption"],
-            ))
-
-        if priority in ("P1", "P2"):
-            alert = styles["critical_text"] if priority == "P1" else styles["warning_text"]
-            story.append(Paragraph("ACTION REQUISE IMMEDIATEMENT", alert))
-
-        return story
-
-    def _build_section_annexe(
-        self,
-        validated_results: list,
-        user_profile: str,
-        styles: dict,
-    ) -> list:
-        if user_profile in ("operateur", "directeur"):
-            return []
-
-        story: list = [
-            PageBreak(),
-            self._section_title("6. Annexe technique", styles),
-        ]
-
-        if user_profile == "technicien":
-            for item in validated_results:
-                if not isinstance(item, dict) or item.get("status") != "success":
-                    continue
-                agent_name = str(item.get("agent", ""))
-                if item.get("judge_valid") is False:
-                    story.append(Paragraph(
-                        f"<b>{agent_name}</b> — Resultat non retenu",
-                        styles["title_subsection"],
-                    ))
-                    continue
-                payload = item.get("result", {})
-                if not isinstance(payload, dict):
-                    payload = {}
-                story.append(Paragraph(f"<b>{agent_name}</b>", styles["title_subsection"]))
-                table = self._metrics_table(self._technician_rows(payload), styles)
-                if table:
-                    story.append(table)
-
-        elif user_profile == "ingenieur":
-            for item in validated_results:
-                if not isinstance(item, dict):
-                    continue
-                agent_name = str(item.get("agent", ""))
-                if item.get("judge_valid") is False:
-                    story.append(Paragraph(
-                        f"<b>{agent_name}</b> — Resultat non retenu",
-                        styles["title_subsection"],
-                    ))
-                    continue
-                payload = item.get("result", {})
-                if not isinstance(payload, dict):
-                    payload = {}
-                story.append(Paragraph(f"<b>{agent_name}</b>", styles["title_subsection"]))
-                table = self._metrics_table(self._flatten_metrics_formatted(payload), styles)
-                if table:
-                    story.append(table)
-
-        return story
-
-    def _compute_sha256(
-        self,
-        state: dict,
-        rapport_oapc: dict,
-        resume_executif: str,
-        timestamp: str,
-    ) -> str:
-        hash_payload = {
-            "question": state.get("question", ""),
-            "target_column": state.get("target_column", ""),
-            "priority": rapport_oapc.get("priority", "P4"),
-            "timestamp": timestamp,
-            "rapport_oapc": rapport_oapc,
-            "resume_executif": resume_executif,
+    def run(self, state: dict) -> dict:
+        """
+        Génère le PDF rapport et retourne chemin + bytes.
+
+        Returns:
+            dict: pdf_path, pdf_bytes, n_pages, sections_built, error.
+        """
+        result = {
+            "pdf_path": "",
+            "pdf_bytes": b"",
+            "n_pages": 0,
+            "sections_built": [],
+            "error": None,
         }
-        return hashlib.sha256(
-            json.dumps(hash_payload, sort_keys=True, ensure_ascii=False).encode(),
-        ).hexdigest()
-
-    def _signature_table(self, styles: dict) -> Table:
-        """Two-column signature block with drawn lines, min 3 cm height."""
-
-        def signature_column(title: str) -> Table:
-            line = Table([[""]], colWidths=[6.8 * cm], rowHeights=[0.55 * cm])
-            line.setStyle(TableStyle([
-                ("LINEBELOW", (0, 0), (-1, -1), 0.75, colors.black),
-            ]))
-            rows = [
-                [Paragraph(f"<b>{title}</b>", styles["title_subsection"])],
-                [Paragraph("Nom :", styles["body_small"])],
-                [line],
-                [Paragraph("Date :", styles["body_small"])],
-                [line],
-                [Paragraph("Signature :", styles["body_small"])],
-                [line],
-            ]
-            col = Table(rows, colWidths=[7 * cm])
-            col.setStyle(TableStyle([
-                ("BOX", (0, 0), (-1, -1), 1, colors.black),
-                ("BACKGROUND", (0, 0), (-1, -1), colors.white),
-                ("LEFTPADDING", (0, 0), (-1, -1), 8),
-                ("RIGHTPADDING", (0, 0), (-1, -1), 8),
-                ("TOPPADDING", (0, 0), (-1, -1), 8),
-                ("BOTTOMPADDING", (0, 0), (-1, -1), 8),
-                ("MINHEIGHT", (0, 0), (-1, -1), 3 * cm),
-            ]))
-            return col
-
-        outer = Table(
-            [[signature_column("Operateur terrain"), signature_column("Responsable qualite")]],
-            colWidths=[8.3 * cm, 8.3 * cm],
-        )
-        outer.setStyle(TableStyle([
-            ("VALIGN", (0, 0), (-1, -1), "TOP"),
-            ("LEFTPADDING", (0, 0), (-1, -1), 2),
-            ("RIGHTPADDING", (0, 0), (-1, -1), 2),
-        ]))
-        return outer
-
-    def _build_section_tracabilite(
-        self,
-        state: dict,
-        rapport_oapc: dict,
-        styles: dict,
-        sha256: str,
-        timestamp: str,
-    ) -> list:
-        validated = state.get("validated_results", [])
-        if not isinstance(validated, list):
-            validated = []
-        agents_called = state.get("agents_called", [])
-        if not isinstance(agents_called, list):
-            agents_called = []
-
-        story: list = [
-            Spacer(1, 0.15 * cm),
-            self._section_title("7. Tracabilite EN9100", styles),
-        ]
-
-        trace_rows = [
-            ["Champ", "Valeur"],
-            ["Version", _VERSION],
-            ["Horodatage", timestamp],
-            ["Question", str(state.get("question", ""))],
-            ["Cible", str(state.get("target_column", ""))],
-            ["Priorite", str(rapport_oapc.get("priority", "P4"))],
-            ["Profil", str(state.get("user_profile", ""))],
-            ["N specialistes", str(len(validated))],
-            ["Agents appeles", ", ".join(str(a) for a in agents_called[:14])],
-            ["SHA-256", sha256],
-        ]
-        trace_table = Table(trace_rows, colWidths=[4.8 * cm, _CONTENT_WIDTH - 4.8 * cm])
-        trace_table.setStyle(TableStyle([
-            ("BACKGROUND", (0, 0), (-1, 0), COULEURS["header"]),
-            ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
-            ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
-            ("FONTSIZE", (0, 0), (-1, -1), 8.5),
-            ("GRID", (0, 0), (-1, -1), 0.25, COULEURS["border"]),
-            ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, COULEURS["light_gray"]]),
-        ]))
-        story.extend([trace_table, Spacer(1, 0.2 * cm), self._signature_table(styles)])
-        return story
-
-    def run(self, state: AgentState | dict) -> dict:
-        start_time = time.time()
-        sha256 = ""
-
         try:
             if not isinstance(state, dict):
-                raise TypeError("state must be a dict")
+                raise TypeError("state doit être un dict")
 
-            rapport_oapc = state.get("rapport_oapc", {})
-            if not isinstance(rapport_oapc, dict) or not rapport_oapc:
-                return {
-                    "agent": "agent_6c_pdf",
-                    "status": "error",
-                    "pdf_path": "",
-                    "pages": 0,
-                    "sha256": "",
-                    "execution_time_ms": int((time.time() - start_time) * 1000),
-                    "error": "rapport_oapc absent — executer Agent 5 avant le PDF",
-                }
-
-            resume_executif = str(state.get("resume_executif", "") or "")
-            interpretations = state.get("interpretations", {})
-            if not isinstance(interpretations, dict):
-                interpretations = {}
-            validated_results = state.get("validated_results", [])
-            if not isinstance(validated_results, list):
-                validated_results = []
-            user_profile = str(state.get("user_profile", "technicien"))
-
-            timestamp = datetime.now().isoformat(timespec="milliseconds")
-            sha256 = self._compute_sha256(state, rapport_oapc, resume_executif, timestamp)
-            self._page_meta = {
-                "datetime": datetime.now().strftime("%d/%m/%Y %H:%M:%S"),
-                "sha_short": f"SHA {sha256[:8]}",
-            }
-
-            styles = self._build_styles()
-            story: list = []
-            story.extend(self._build_page_de_garde(state, rapport_oapc, styles))
-            story.extend(self._build_section_resume(state, resume_executif, rapport_oapc, styles))
-            story.extend(self._build_section_graphique(state, styles))
-            story.extend(self._build_section_interpretations(
-                state, interpretations, validated_results, user_profile, styles, rapport_oapc,
-            ))
-            story.extend(self._build_section_causes(validated_results, styles))
-            story.extend(self._build_section_recommandation(rapport_oapc, user_profile, styles))
-
-            annexe = self._build_section_annexe(validated_results, user_profile, styles)
-            if annexe:
-                story.extend(annexe)
-
-            story.extend(self._build_section_tracabilite(
-                state, rapport_oapc, styles, sha256, timestamp,
-            ))
-
-            output_dir = _ROOT / "outputs"
-            output_dir.mkdir(exist_ok=True)
+            priority = self._priority(state)
+            target = self._target(state)
+            ts_slug = datetime.now().strftime("%Y%m%d_%H%M%S")
+            reports_dir = _ROOT / "reports"
+            reports_dir.mkdir(parents=True, exist_ok=True)
+            safe_target = "".join(c if c.isalnum() or c in "-_" else "_" for c in target)[:40]
             output_path = str(
-                output_dir / f"rapport_industria_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf",
+                reports_dir / f"rapport_{safe_target}_{ts_slug}_{priority}.pdf"
             )
 
-            doc = SimpleDocTemplate(
-                output_path,
-                pagesize=A4,
-                rightMargin=_MARGIN,
-                leftMargin=_MARGIN,
-                topMargin=1.55 * cm,
-                bottomMargin=1.45 * cm,
-                title="Rapport IndustrIA",
-                author=_VERSION,
-            )
+            build_info = self._build_pdf(state, output_path)
+            result["pdf_path"] = output_path
+            result["n_pages"] = build_info.get("n_pages", self._total_pages)
+            result["sections_built"] = build_info.get("sections_built", [])
 
-            def page_callback(canv: pdf_canvas.Canvas, total: int) -> None:
-                self._draw_page_frame(canv, total)
-
-            doc.build(
-                story,
-                canvasmaker=lambda *a, **kw: _NumberedCanvas(
-                    *a, page_callback=page_callback, **kw,
-                ),
-            )
-            pages = self._total_pages
+            try:
+                with open(output_path, "rb") as fh:
+                    result["pdf_bytes"] = fh.read()
+            except OSError as exc:
+                logger.warning("Lecture pdf_bytes impossible : %s", exc)
 
             state["pdf_path"] = output_path
-            agents = state.setdefault("agents_called", [])
-            if "agent_6c_pdf" not in agents:
-                agents.append("agent_6c_pdf")
-
-            return {
-                "agent": "agent_6c_pdf",
-                "status": "success",
-                "pdf_path": output_path,
-                "pages": pages,
-                "sha256": sha256,
-                "execution_time_ms": int((time.time() - start_time) * 1000),
-                "error": None,
-            }
+            return result
         except Exception as exc:
-            logger.exception("agent_6c_pdf failed")
-            if isinstance(state, dict):
-                state.setdefault("errors", []).append(str(exc))
-            return {
-                "agent": "agent_6c_pdf",
-                "status": "error",
-                "pdf_path": "",
-                "pages": 0,
-                "sha256": sha256,
-                "execution_time_ms": int((time.time() - start_time) * 1000),
-                "error": str(exc),
+            logger.exception("Agent6cPDF.run failed")
+            result["error"] = str(exc)
+            return result
+
+    def _build_pdf(self, state: dict, output_path: str) -> dict:
+        """Construit le document PDF complet."""
+        self._header_meta = {
+            "title": "Rapport d'Analyse Industrielle",
+            "machine": format_value(state.get("machine_id", "default")),
+            "timestamp": format_timestamp(datetime.now()),
+        }
+
+        doc = SimpleDocTemplate(
+            output_path,
+            pagesize=A4,
+            rightMargin=PAGE_MARGIN,
+            leftMargin=PAGE_MARGIN,
+            topMargin=_TOP_MARGIN,
+            bottomMargin=_BOTTOM_MARGIN,
+            title="Rapport IndustrIA",
+            author=_VERSION,
+        )
+        self._doc_ref = doc
+
+        story: list = []
+        sections_built: list[str] = []
+
+        section_builders = [
+            ("S1_garde", self._section_1_garde),
+            ("S2_resume", self._section_2_resume),
+            ("S3_kpis", self._section_3_kpis),
+            ("S4_graphique", self._section_4_graphique),
+            ("S5_tendance", self._section_5_tendance),
+            ("S6_interpretations", self._section_6_interpretations),
+            ("S7_causes", self._section_7_causes),
+            ("S8_heatmap", self._section_8_heatmap),
+            ("S9_financier", self._section_9_financier),
+            ("S10_recommandations", self._section_10_recommandations),
+            ("S11_annexe", self._section_11_annexe),
+            ("S12_tracabilite", self._section_12_tracabilite),
+        ]
+
+        for name, builder in section_builders:
+            block = self._safe_section(name, builder, state)
+            if block:
+                story.extend(block)
+                sections_built.append(name)
+
+        if not story:
+            story.append(
+                Paragraph(
+                    "Rapport vide — données insuffisantes.",
+                    self.styles["body"],
+                )
+            )
+
+        def page_callback(canv: pdf_canvas.Canvas, total: int) -> None:
+            self._total_pages = max(1, total)
+            draw_header(
+                canv,
+                self._doc_ref,
+                self._header_meta["title"],
+                self._header_meta["machine"],
+                self._header_meta["timestamp"],
+            )
+            draw_footer(canv, self._doc_ref, canv.getPageNumber(), total)
+
+        doc.build(
+            story,
+            canvasmaker=lambda *a, **kw: _NumberedCanvas(
+                *a, page_callback=page_callback, **kw
+            ),
+        )
+
+        return {"n_pages": self._total_pages, "sections_built": sections_built}
+
+    def _safe_section(self, name: str, builder, state: dict) -> list:
+        try:
+            items = builder(state)
+            return items if items is not None else []
+        except Exception as exc:
+            logger.exception("Section %s failed", name)
+            return [
+                Paragraph(
+                    sanitize_for_pdf(f"Section indisponible ({name})."),
+                    self.styles["body"],
+                ),
+                Spacer(1, 4 * mm),
+            ]
+
+    # ── Helpers ───────────────────────────────────────────
+
+    def _priority(self, state: dict) -> str:
+        p = str(state.get("priority") or state.get("rapport_oapc", {}).get("priority", "P4"))
+        return p.upper() if p.upper() in ("P1", "P2", "P3", "P4") else "P4"
+
+    def _target(self, state: dict) -> str:
+        return str(
+            state.get("target_column")
+            or state.get("intention", {}).get("target_col", "capteur")
+        )
+
+    def _profile(self, state: dict) -> str:
+        p = str(state.get("user_profile", "technicien")).lower()
+        return p if p in ("operateur", "technicien", "ingenieur", "directeur") else "technicien"
+
+    def _rapport_oapc(self, state: dict) -> dict:
+        r = state.get("rapport_oapc", {})
+        return r if isinstance(r, dict) else {}
+
+    def _h1(self, text: str) -> Paragraph:
+        return Paragraph(sanitize_for_pdf(text), self.styles["h1"])
+
+    def _body(self, text: str) -> Paragraph:
+        return Paragraph(sanitize_for_pdf(text), self.styles["body"])
+
+    def _caption(self, text: str) -> Paragraph:
+        return Paragraph(sanitize_for_pdf(text), self.styles["caption"])
+
+    def _placeholder(self, text: str) -> list:
+        return [
+            Spacer(1, 2 * mm),
+            self._body(text),
+            Spacer(1, 4 * mm),
+        ]
+
+    def _image_png(
+        self,
+        png_bytes: bytes | None,
+        width_mm: float,
+        height_mm: float,
+    ) -> Any | None:
+        if not png_bytes:
+            return None
+        try:
+            return Image(
+                io.BytesIO(png_bytes),
+                width=width_mm * mm,
+                height=height_mm * mm,
+            )
+        except Exception as exc:
+            logger.warning("Image PNG invalide : %s", exc)
+            return None
+
+    def _simple_table(
+        self,
+        rows: list[list],
+        col_widths: list[float] | None = None,
+        style_name: str = "TABLE_ROW",
+    ) -> Table:
+        if col_widths is None:
+            n = max(len(r) for r in rows)
+            col_widths = [_CONTENT_WIDTH / n] * n
+        tbl = Table(rows, colWidths=col_widths, repeatRows=1)
+        tbl.setStyle(get_table_style(style_name))
+        return tbl
+
+    def _canonical_agent(self, name: str | None) -> str:
+        if not isinstance(name, str):
+            return ""
+        return _AGENT_CANONICAL.get(name, name.strip().lower())
+
+    def _find_specialist(self, state: dict, key: str) -> dict | None:
+        for bucket in ("validated_results", "specialist_results"):
+            items = state.get(bucket, [])
+            if not isinstance(items, list):
+                continue
+            for item in items:
+                if not isinstance(item, dict):
+                    continue
+                agent = item.get("agent", "")
+                if agent == key or self._canonical_agent(agent) == self._canonical_agent(key):
+                    return item
+        return None
+
+    def _compute_sha256(self, state: dict, timestamp: str) -> str:
+        question = str(state.get("question", ""))
+        rapport = self._rapport_oapc(state)
+        json_compact = state.get("json_compact")
+        if not json_compact:
+            json_compact = {
+                "priority": self._priority(state),
+                "target": self._target(state),
+                "goal": state.get("intention", {}).get("goal", ""),
+                "n_specialists": len(state.get("validated_results", []) or []),
             }
+        try:
+            jc = json.dumps(json_compact, sort_keys=True, ensure_ascii=False, default=str)
+        except TypeError:
+            jc = str(json_compact)
+        ro = json.dumps(rapport, sort_keys=True, ensure_ascii=False, default=str)
+        payload = f"{question}{jc}{ro}{timestamp}"
+        return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+    def _confidence_badge(self, confidence: str) -> Table:
+        conf = str(confidence or "").lower()
+        if conf == "haute":
+            bg, fg, label = COLORS["bg_ok"], COLORS["P4"], "Confiance : HAUTE"
+        elif conf == "faible":
+            bg, fg, label = COLORS["bg_critical"], COLORS["P1"], "Confiance : FAIBLE"
+        else:
+            bg, fg, label = COLORS["bg_warn"], COLORS["P3"], "Confiance : MOYENNE"
+        cell = Paragraph(
+            f'<para align="center"><b>{label}</b></para>',
+            self.styles["badge"],
+        )
+        tbl = Table([[cell]], colWidths=[_CONTENT_WIDTH * 0.5])
+        tbl.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (-1, -1), bg),
+            ("TEXTCOLOR", (0, 0), (-1, -1), fg),
+            ("ALIGN", (0, 0), (-1, -1), "CENTER"),
+            ("BOX", (0, 0), (-1, -1), 1, fg),
+        ]))
+        return tbl
+
+    def _priority_badge(self, priority: str) -> Table:
+        """Badge couleur ReportLab (remplace emojis non supportés)."""
+        prio = str(priority or "P4").upper()
+        specs = {
+            "P1": (colors.HexColor("#C0392B"), colors.white, "CRITIQUE"),
+            "P2": (colors.HexColor("#E67E22"), colors.white, "URGENT"),
+            "P3": (colors.HexColor("#F1C40F"), colors.black, "SURVEILLANCE"),
+            "P4": (colors.HexColor("#27AE60"), colors.white, "OK"),
+        }
+        bg, fg, label = specs.get(prio, specs["P4"])
+        cell = Paragraph(
+            f'<para align="center"><b>{prio} — {label}</b></para>',
+            self.styles["badge"],
+        )
+        tbl = Table([[cell]], colWidths=[_CONTENT_WIDTH * 0.45])
+        tbl.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (-1, -1), bg),
+            ("TEXTCOLOR", (0, 0), (-1, -1), fg),
+            ("ALIGN", (0, 0), (-1, -1), "CENTER"),
+            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+            ("BOX", (0, 0), (-1, -1), 1, bg),
+            ("TOPPADDING", (0, 0), (-1, -1), 6),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+        ]))
+        return tbl
+
+    @staticmethod
+    def _resolve_anomaly_timestamp(row: pd.Series, df: pd.DataFrame) -> Any:
+        """Colonne temporelle : Date > timestamp > date > datetime > index."""
+        for col in ("Date", "timestamp", "date"):
+            if col in row.index:
+                val = row[col]
+                try:
+                    if val is not None and not pd.isna(val):
+                        return val
+                except (TypeError, ValueError):
+                    if val is not None:
+                        return val
+        for col in df.columns:
+            if pd.api.types.is_datetime64_any_dtype(df[col]):
+                val = row[col]
+                try:
+                    if not pd.isna(val):
+                        return val
+                except (TypeError, ValueError):
+                    return val
+        if isinstance(df.index, pd.DatetimeIndex):
+            return row.name
+        return None
+
+    # ── S1 Page de garde ────────────────────────────────
+
+    def _section_1_garde(self, state: dict) -> list:
+        priority = self._priority(state)
+        target = self._target(state)
+        profile = self._profile(state)
+        prio_color = COLORS.get(priority, COLORS["header"])
+
+        verdict_txt, verdict_style = _VERDICT_TEXT.get(priority, _VERDICT_TEXT["P4"])
+        verdict_para = Paragraph(
+            sanitize_for_pdf(verdict_txt),
+            self.styles[verdict_style],
+        )
+
+        badge_prio = self._priority_badge(priority)
+
+        ctx_rows = [
+            ["Champ", "Valeur"],
+            ["Machine", format_value(state.get("machine_id", "N/A"))],
+            ["Lot", format_value(state.get("lot_id", "N/A"))],
+            ["Opérateur", format_value(state.get("operateur", "N/A"))],
+            ["Recette", format_value(state.get("recette", "N/A"))],
+            ["Date analyse", format_timestamp(datetime.now())],
+            ["Profil rapport", format_value(profile)],
+        ]
+        ctx_table = self._simple_table(
+            ctx_rows,
+            col_widths=[45 * mm, _CONTENT_WIDTH - 45 * mm],
+        )
+
+        story = [
+            Spacer(1, 6 * mm),
+            Paragraph(
+                "RAPPORT D'ANALYSE INDUSTRIELLE",
+                self.styles["title"],
+            ),
+            Spacer(1, 4 * mm),
+            Paragraph(
+                sanitize_for_pdf(target),
+                self.styles["h1"],
+            ),
+            Spacer(1, 3 * mm),
+            Table([[badge_prio]], colWidths=[_CONTENT_WIDTH]),
+            Spacer(1, 4 * mm),
+            Table([[verdict_para]], colWidths=[_CONTENT_WIDTH]),
+            Spacer(1, 6 * mm),
+            self._h1("Contexte production"),
+            ctx_table,
+            Spacer(1, 4 * mm),
+            self._confidence_badge(state.get("confidence", "")),
+            Spacer(1, 2 * mm),
+            HRFlowable(width=_CONTENT_WIDTH, color=prio_color, thickness=2),
+            PageBreak(),
+        ]
+        return story
+
+    # ── S2 Résumé exécutif ──────────────────────────────
+
+    def _section_2_resume(self, state: dict) -> list:
+        rapport = self._rapport_oapc(state)
+        priority = self._priority(state)
+        resume = sanitize_for_pdf(str(state.get("resume_executif", "") or ""))
+
+        prescrire_bg = COLORS["light_blue"]
+        if priority == "P1":
+            prescrire_bg = COLORS["bg_critical"]
+        elif priority in ("P2", "P3"):
+            prescrire_bg = COLORS["bg_warn"]
+
+        oapc_rows = [
+            ["Étape OAPC", "Contenu"],
+            [
+                "OBSERVER",
+                sanitize_for_pdf(rapport.get("observer", "N/A")),
+            ],
+            [
+                "ANALYSER",
+                sanitize_for_pdf(rapport.get("analyser", "N/A")),
+            ],
+            [
+                "PRESCRIRE",
+                sanitize_for_pdf(rapport.get("prescrire", state.get("recommendation", "N/A"))),
+            ],
+            [
+                "CERTIFIER",
+                sanitize_for_pdf(rapport.get("certifier", "N/A")),
+            ],
+        ]
+        tbl = Table(oapc_rows, colWidths=[32 * mm, _CONTENT_WIDTH - 32 * mm])
+        tbl.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (-1, 0), COLORS["header"]),
+            ("TEXTCOLOR", (0, 0), (-1, 0), COLORS["text_light"]),
+            ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+            ("FONTSIZE", (0, 0), (-1, -1), 8),
+            ("GRID", (0, 0), (-1, -1), 0.5, COLORS["border"]),
+            ("BACKGROUND", (0, 1), (-1, 1), COLORS["light_blue"]),
+            ("BACKGROUND", (0, 3), (-1, 3), prescrire_bg),
+            ("BACKGROUND", (0, 4), (-1, 4), colors.HexColor("#F1F5F9")),
+            ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ]))
+
+        ts = datetime.now().isoformat(timespec="milliseconds")
+        sha = self._compute_sha256(state, ts)[:16]
+
+        story = [
+            self._h1("RÉSUMÉ EXÉCUTIF"),
+            Spacer(1, 2 * mm),
+        ]
+        if resume:
+            story.extend([self._body(resume), Spacer(1, 3 * mm)])
+        story.extend([
+            tbl,
+            Spacer(1, 3 * mm),
+            self._confidence_badge(state.get("confidence", "")),
+            self._caption(f"Empreinte (16 car.) : {sha}"),
+            PageBreak(),
+        ])
+        return story
+
+    # ── S3 Dashboard KPIs ───────────────────────────────
+
+    def _section_3_kpis(self, state: dict) -> list:
+        kpis = state.get("kpis") or {}
+        if not isinstance(kpis, dict) or not kpis:
+            return [
+                self._h1("DASHBOARD KPIs"),
+                *self._placeholder(
+                    "KPIs non disponibles — tables production non encore peuplées."
+                ),
+            ]
+
+        imgs = []
+        for key, label in (
+            ("gauge_oee_png", "OEE"),
+            ("gauge_mtbf_png", "MTBF"),
+            ("gauge_fpyield_png", "FPY"),
+        ):
+            img = self._image_png(kpis.get(key), 55, 55)
+            if img:
+                imgs.append(img)
+            else:
+                imgs.append(Paragraph(label, self.styles["caption"]))
+
+        gauge_row = Table([imgs], colWidths=[_CONTENT_WIDTH / 3] * 3)
+        gauge_row.setStyle(TableStyle([("ALIGN", (0, 0), (-1, -1), "CENTER")]))
+
+        oee = kpis.get("oee")
+        disp = kpis.get("disponibilite")
+        perf = kpis.get("performance")
+        qual = kpis.get("qualite")
+
+        recap_rows = [
+            ["Indicateur", "Valeur", "Détail"],
+            [
+                "OEE / TRS",
+                format_percentage(oee) if oee is not None else "N/A",
+                f"D={format_percentage(disp) if disp is not None else 'N/A'} "
+                f"P={format_percentage(perf) if perf is not None else 'N/A'} "
+                f"Q={format_percentage(qual) if qual is not None else 'N/A'}",
+            ],
+            [
+                "MTBF",
+                f"{format_number(kpis.get('mtbf_h'), 1)} h",
+                f"MTTR {format_number(kpis.get('mttr_h'), 1)} h — "
+                f"{format_number(kpis.get('nb_pannes'), 0)} pannes",
+            ],
+            [
+                "First Pass Yield",
+                format_percentage(kpis.get("first_pass_yield"))
+                if kpis.get("first_pass_yield") is not None
+                else "N/A",
+                f"Scrap {format_percentage(kpis.get('scrap_rate')) if kpis.get('scrap_rate') is not None else 'N/A'} — "
+                f"{format_number(kpis.get('nb_pieces_total'), 0)} pièces",
+            ],
+        ]
+
+        return [
+            self._h1("DASHBOARD KPIs"),
+            Spacer(1, 2 * mm),
+            gauge_row,
+            Spacer(1, 4 * mm),
+            self._simple_table(recap_rows, [50 * mm, 35 * mm, _CONTENT_WIDTH - 85 * mm]),
+            Spacer(1, 4 * mm),
+        ]
+
+    # ── S4 Graphique principal ──────────────────────────
+
+    def _section_4_graphique(self, state: dict) -> list:
+        target = self._target(state)
+        story = [self._h1(f"ANALYSE CAPTEUR — {target}"), Spacer(1, 2 * mm)]
+
+        png = None
+        z_item = self._find_specialist(state, "ZScoreSpecialist")
+        if z_item and isinstance(z_item.get("result"), dict):
+            png = z_item["result"].get("timeseries_png")
+
+        if not png:
+            df = state.get("df_propre")
+            anom = state.get("df_anomalies")
+            if isinstance(df, pd.DataFrame) and not df.empty:
+                png = build_timeseries(df, target, anomalies=anom, title=target)
+
+        img = self._image_png(png, 170, 65)
+        if img:
+            story.append(img)
+        else:
+            story.extend(self._placeholder("Graphique temporel non disponible."))
+
+        story.append(Spacer(1, 3 * mm))
+        story.append(self._h1("Top 3 anomalies"))
+        story.extend(self._top_anomalies_table(state, z_item))
+
+        stats = self._graph_stats(state, z_item)
+        story.append(Spacer(1, 2 * mm))
+        story.append(self._body(stats))
+        story.append(PageBreak())
+        return story
+
+    def _top_anomalies_table(self, state: dict, z_item: dict | None) -> list:
+        df_anom = state.get("df_anomalies")
+        target = self._target(state)
+        rows = [["Rang", "Timestamp", "Valeur", "Z-score", "Classification"]]
+
+        if isinstance(df_anom, pd.DataFrame) and not df_anom.empty:
+            subset = df_anom.head(3)
+            for i, (_, row) in enumerate(subset.iterrows(), 1):
+                ts = self._resolve_anomaly_timestamp(row, df_anom)
+                val = row.get(target, row.iloc[0] if len(row) else "N/A")
+                zsc = row.get("zscore", row.get("max_zscore", "N/A"))
+                cls = row.get("type_anomalie", row.get("classification", "anomalie"))
+                rows.append([
+                    str(i),
+                    format_timestamp(ts),
+                    format_number(val, 2),
+                    format_number(zsc, 2),
+                    format_value(cls),
+                ])
+        else:
+            payload = z_item.get("result", {}) if z_item else {}
+            timestamps = payload.get("anomalies_timestamps", [])[:3]
+            if timestamps:
+                for i, ts in enumerate(timestamps, 1):
+                    rows.append([str(i), format_value(ts), "N/A", "N/A", "anomalie"])
+            else:
+                return self._placeholder("Aucune anomalie détectée ✅")
+
+        return [self._simple_table(rows, [12 * mm, 45 * mm, 28 * mm, 22 * mm, 43 * mm])]
+
+    def _graph_stats(self, state: dict, z_item: dict | None) -> str:
+        n_pts = "N/A"
+        df = state.get("df_propre")
+        if isinstance(df, pd.DataFrame):
+            n_pts = str(len(df))
+        pct = max_z = cpk = "N/A"
+        if z_item and isinstance(z_item.get("result"), dict):
+            r = z_item["result"]
+            pct = format_number(r.get("pourcentage_anomalies"), 1) + " %"
+            max_z = format_number(r.get("max_zscore"), 2)
+        cpk_item = self._find_specialist(state, "CpCpkSpecialist")
+        if cpk_item and isinstance(cpk_item.get("result"), dict):
+            r_cpk = cpk_item["result"]
+            cpk = format_number(r_cpk.get("cpk", r_cpk.get("Cpk")), 2)
+        return (
+            f"Points : {n_pts} | % anomalies : {pct} | max z-score : {max_z} | Cpk : {cpk}"
+        )
+
+    # ── S5 Tendance ─────────────────────────────────────
+
+    def _section_5_tendance(self, state: dict) -> list:
+        tendance = state.get("tendance") or {}
+        if not isinstance(tendance, dict) or not tendance:
+            return [
+                self._h1("TENDANCE & COMPARAISON HISTORIQUE"),
+                *self._placeholder("Analyse de tendance non disponible."),
+                PageBreak(),
+            ]
+
+        story = [
+            self._h1("TENDANCE & COMPARAISON HISTORIQUE"),
+            Spacer(1, 2 * mm),
+        ]
+        img = self._image_png(tendance.get("timeseries_png"), 170, 60)
+        if img:
+            story.append(img)
+        phrase = state.get("phrase_tendance") or tendance.get("resume", "")
+        if phrase:
+            story.extend([Spacer(1, 2 * mm), self._body(str(phrase))])
+
+        evo = tendance.get("evolution_pct")
+        rows = [
+            ["Métrique", "Semaine actuelle", "Semaine précédente", "Évolution"],
+            [
+                "Tendance Mann-Kendall",
+                format_value(tendance.get("direction_fr")),
+                f"p={format_number(tendance.get('p_value'), 3)}",
+                format_value(tendance.get("significant")),
+            ],
+            [
+                "Évolution %",
+                "—",
+                "—",
+                f"{format_number(evo, 1)} %" if evo is not None else "N/A",
+            ],
+        ]
+        story.extend([
+            Spacer(1, 3 * mm),
+            self._simple_table(rows, [45 * mm, 38 * mm, 38 * mm, 39 * mm]),
+            PageBreak(),
+        ])
+        return story
+
+    # ── S6 Interprétations ──────────────────────────────
+
+    def _section_6_interpretations(self, state: dict) -> list:
+        interpretations = state.get("interpretations") or {}
+        if not isinstance(interpretations, dict) or not interpretations:
+            return [
+                self._h1("INTERPRÉTATIONS PAR SPÉCIALISTE"),
+                *self._placeholder("Analyses en cours..."),
+                PageBreak(),
+            ]
+
+        story = [self._h1("INTERPRÉTATIONS PAR SPÉCIALISTE"), Spacer(1, 2 * mm)]
+        for agent_name, text in interpretations.items():
+            story.append(Paragraph(
+                sanitize_for_pdf(str(agent_name)),
+                self.styles["h2"],
+            ))
+            story.append(self._body(str(text)))
+            metrics = self._metrics_for_agent(state, str(agent_name))
+            if metrics:
+                story.append(Spacer(1, 1 * mm))
+                story.append(metrics)
+            story.append(Spacer(1, 3 * mm))
+        story.append(PageBreak())
+        return story
+
+    def _metrics_for_agent(self, state: dict, agent_name: str) -> Table | None:
+        item = self._find_specialist(state, agent_name)
+        if not item or not isinstance(item.get("result"), dict):
+            return None
+        result = item["result"]
+        rows = [["Métrique", "Valeur"]]
+        count = 0
+        for key, val in result.items():
+            if key in ("classification", "anomalies_timestamps"):
+                continue
+            if count >= 6:
+                break
+            rows.append([format_value(key), format_value(val)])
+            count += 1
+        if len(rows) <= 1:
+            return None
+        return self._simple_table(rows, [55 * mm, _CONTENT_WIDTH - 55 * mm], "TABLE_COMPACT")
+
+    # ── S7 Causes ───────────────────────────────────────
+
+    def _section_7_causes(self, state: dict) -> list:
+        causes_block = state.get("causes") or {}
+        causes_list: list = []
+        bar_png = None
+        note = _CAUSES_NOTE
+
+        if isinstance(causes_block, dict):
+            causes_list = causes_block.get("causes", []) or []
+            bar_png = causes_block.get("bar_png")
+            note = causes_block.get("note", note)
+        elif isinstance(causes_block, list):
+            causes_list = causes_block
+
+        if not causes_list:
+            return [
+                self._h1("CAUSES PROBABLES"),
+                *self._placeholder("Aucune cause identifiée."),
+                PageBreak(),
+            ]
+
+        story = [self._h1("CAUSES PROBABLES"), Spacer(1, 2 * mm)]
+        img = self._image_png(bar_png, 170, 80)
+        if img:
+            story.append(img)
+            story.append(Spacer(1, 3 * mm))
+
+        rows = [["Rang", "Cause", "Score /100", "Source", "Détail"]]
+        for i, c in enumerate(causes_list[:5], 1):
+            if not isinstance(c, dict):
+                continue
+            rows.append([
+                str(i),
+                format_value(c.get("label")),
+                format_number(c.get("score"), 0),
+                format_value(c.get("source")),
+                sanitize_for_pdf(str(c.get("detail", "")))[:80],
+            ])
+        story.append(self._simple_table(
+            rows,
+            [12 * mm, 55 * mm, 22 * mm, 28 * mm, 53 * mm],
+        ))
+        story.extend([
+            Spacer(1, 2 * mm),
+            self._caption(note),
+            PageBreak(),
+        ])
+        return story
+
+    # ── S8 Heatmap ──────────────────────────────────────
+
+    def _section_8_heatmap(self, state: dict) -> list:
+        heatmap = state.get("heatmap") or {}
+        if not isinstance(heatmap, dict) or not heatmap:
+            return [
+                self._h1("CORRÉLATIONS MULTIVARIÉES"),
+                *self._placeholder("Matrice de corrélations non disponible."),
+            ]
+
+        story = [self._h1("CORRÉLATIONS MULTIVARIÉES"), Spacer(1, 2 * mm)]
+        img = self._image_png(heatmap.get("heatmap_png"), 170, 100)
+        if img:
+            story.append(img)
+        top = heatmap.get("top_correlations", [])
+        rows = [["Variable A", "Variable B", "r", "Force"]]
+        if isinstance(top, list):
+            for pair in top[:10]:
+                if isinstance(pair, dict):
+                    rows.append([
+                        format_value(pair.get("col_a")),
+                        format_value(pair.get("col_b")),
+                        format_number(pair.get("r"), 2),
+                        format_value(pair.get("force")),
+                    ])
+        story.extend([
+            Spacer(1, 3 * mm),
+            self._simple_table(rows, [45 * mm, 45 * mm, 25 * mm, 35 * mm]),
+            self._caption(
+                f"Méthode : {format_value(heatmap.get('method', 'pearson'))}"
+            ),
+            Spacer(1, 4 * mm),
+        ])
+        return story
+
+    # ── S9 Impact financier ─────────────────────────────
+
+    def _section_9_financier(self, state: dict) -> list:
+        fin = state.get("impact_financier") or {}
+        if not isinstance(fin, dict) or not fin:
+            return [
+                self._h1("IMPACT FINANCIER ESTIMÉ"),
+                *self._placeholder("Estimation financière non disponible."),
+            ]
+
+        story = [self._h1("IMPACT FINANCIER ESTIMÉ"), Spacer(1, 2 * mm)]
+        img = self._image_png(fin.get("waterfall_png"), 170, 70)
+        if img:
+            story.append(img)
+
+        rows = [
+            ["Poste", "Montant"],
+            ["Coût arrêt estimé", f"{format_number(fin.get('cout_arret_estime'), 2)} €"],
+            ["Coût rebuts estimé", f"{format_number(fin.get('cout_rebuts_estime'), 2)} €"],
+            [
+                "Total estimé",
+                f"{format_number(fin.get('cout_total_estime'), 2)} €",
+            ],
+        ]
+        h_ap = fin.get("heures_avant_panne")
+        if h_ap is not None:
+            rows.append(["Heures avant panne", f"{format_number(h_ap, 1)} h"])
+
+        tbl = self._simple_table(rows, [90 * mm, _CONTENT_WIDTH - 90 * mm])
+        story.extend([
+            Spacer(1, 3 * mm),
+            tbl,
+            Spacer(1, 2 * mm),
+            self._caption("Estimation basée sur coût horaire config machine."),
+        ])
+
+        if self._priority(state) == "P1":
+            alert = Paragraph(
+                '<para backColor="#FEF2F2" borderColor="#DC2626" '
+                'borderWidth="1" borderPadding="4">'
+                "<b>Action immédiate requise</b></para>",
+                self.styles["body"],
+            )
+            story.extend([Spacer(1, 2 * mm), alert])
+        story.append(Spacer(1, 4 * mm))
+        return story
+
+    # ── S10 Recommandations + RAG ───────────────────────
+
+    def _section_10_recommandations(self, state: dict) -> list:
+        rapport = self._rapport_oapc(state)
+        reco = sanitize_for_pdf(
+            str(state.get("reco_enrichie") or rapport.get("prescrire", "N/A"))
+        )
+        priority = self._priority(state)
+        delai = _DELAIS.get(priority, _DELAIS["P4"])
+        responsable = format_value(state.get("responsable", "Équipe maintenance"))
+
+        story = [
+            self._h1("RECOMMANDATIONS"),
+            Spacer(1, 2 * mm),
+            self._body(reco),
+            Spacer(1, 2 * mm),
+            self._body(f"Délai d'intervention : {delai}"),
+            self._body(f"Responsable : {responsable}"),
+        ]
+
+        rag = state.get("rag_context") or {}
+        n_found = 0
+        if isinstance(rag, dict):
+            n_found = int(rag.get("n_found", 0) or 0)
+        if n_found > 0 and isinstance(rag.get("results"), list) and rag["results"]:
+            top = rag["results"][0]
+            citation = format_value(top.get("citation", ""))
+            extrait = sanitize_for_pdf(str(top.get("text", "")))[:200]
+            rag_box = Paragraph(
+                '<para backColor="#EBF4FF" borderPadding="6">'
+                f"<b>Référence documentaire :</b> {citation}<br/>"
+                f"{extrait}</para>",
+                self.styles["body"],
+            )
+            story.extend([Spacer(1, 3 * mm), rag_box])
+        story.append(PageBreak())
+        return story
+
+    # ── S11 Annexe technique ────────────────────────────
+
+    def _section_11_annexe(self, state: dict) -> list:
+        profile = self._profile(state)
+        if profile not in ("ingenieur", "technicien"):
+            return []
+
+        story = [
+            self._h1("ANNEXE TECHNIQUE"),
+            Spacer(1, 2 * mm),
+        ]
+
+        sql = sanitize_for_pdf(str(state.get("sql_query", "N/A")))
+        story.append(Paragraph(f"SQL :<br/><font name='Courier' size='7'>{sql}</font>", self.styles["code"]))
+
+        cleaning = state.get("cleaning_stats", {})
+        story.extend([
+            Spacer(1, 2 * mm),
+            self._body(f"Nettoyage Agent 3 : {format_dict(cleaning) if isinstance(cleaning, dict) else format_value(cleaning)}"),
+        ])
+
+        warnings = state.get("judge_warnings", [])
+        if isinstance(warnings, list) and warnings:
+            story.append(self._body(f"Judge warnings : {format_list(warnings, max_items=5)}"))
+        else:
+            story.append(self._body("Judge warnings : Aucun"))
+
+        exec_times = state.get("execution_times", {})
+        if isinstance(exec_times, dict) and exec_times:
+            rows = [["Agent", "Durée (ms)"]]
+            for agent, ms in sorted(exec_times.items(), key=lambda x: str(x[0])):
+                rows.append([format_value(agent), format_number(ms, 0)])
+            story.extend([
+                Spacer(1, 2 * mm),
+                self._simple_table(rows, [80 * mm, _CONTENT_WIDTH - 80 * mm], "TABLE_COMPACT"),
+            ])
+
+        models = (
+            f"7b={OLLAMA_CONFIG.get('model_7b', 'N/A')}, "
+            f"14b={OLLAMA_CONFIG.get('model_14b', 'N/A')}"
+        )
+        story.extend([Spacer(1, 2 * mm), self._caption(f"Modèles Ollama : {models}")])
+        return story
+
+    # ── S12 Traçabilité EN9100 ──────────────────────────
+
+    def _section_12_tracabilite(self, state: dict) -> list:
+        ts = datetime.now().isoformat(timespec="milliseconds")
+        sha = self._compute_sha256(state, ts)
+        n_pts = "N/A"
+        df = state.get("df_propre")
+        if isinstance(df, pd.DataFrame):
+            n_pts = str(len(df))
+
+        question = str(state.get("question", ""))
+        if len(question) > 100:
+            question = question[:97] + "..."
+
+        meta_rows = [
+            ["Champ", "Valeur"],
+            ["Version IndustrIA", "v2.1"],
+            ["Date génération", format_timestamp(datetime.now())],
+            ["Profil rapport", format_value(self._profile(state))],
+            ["Machine", format_value(state.get("machine_id", "N/A"))],
+            ["Question analysée", sanitize_for_pdf(question)],
+            ["Nb points analysés", n_pts],
+            ["Spécialistes appelés", format_list(state.get("agents_called", []), max_items=8)],
+        ]
+
+        sig_height = 25 * mm
+        sig_table = Table(
+            [
+                ["Technicien", "Responsable qualité"],
+                ["", ""],
+                ["Nom : ___________________", "Nom : ___________________"],
+                ["Date : __________________", "Date : __________________"],
+                ["Signature :", "Signature :"],
+            ],
+            colWidths=[_CONTENT_WIDTH / 2, _CONTENT_WIDTH / 2],
+            rowHeights=[8 * mm, 6 * mm, 8 * mm, 8 * mm, sig_height - 30 * mm],
+        )
+        sig_table.setStyle(TableStyle([
+            ("GRID", (0, 0), (-1, -1), 0.5, COLORS["border"]),
+            ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+            ("FONTSIZE", (0, 0), (-1, -1), 8),
+            ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ]))
+
+        return [
+            self._h1("TRAÇABILITÉ — EN9100"),
+            Spacer(1, 2 * mm),
+            self._simple_table(meta_rows, [50 * mm, _CONTENT_WIDTH - 50 * mm]),
+            Spacer(1, 3 * mm),
+            self._body("Empreinte numérique du rapport"),
+            Paragraph(
+                f'<font name="Courier" size="6">{sha}</font>',
+                self.styles["code"],
+            ),
+            Spacer(1, 4 * mm),
+            sig_table,
+            Spacer(1, 3 * mm),
+            self._caption("Document à conserver 10 ans — Réf. EN9100 Rev D"),
+        ]
+
+
+# Alias rétrocompatibilité pipeline existant
+PDFReportAgent = Agent6cPDF
 
 
 if __name__ == "__main__":
-    logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
-
-    np.random.seed(42)
-    n = 100
-
-    df_test = pd.DataFrame({
-        "timestamp": pd.date_range("2026-01-01", periods=n, freq="1min"),
-        "inducteur_1": np.concatenate([
-            np.random.normal(100, 5, 80),
-            np.random.normal(130, 5, 20),
-        ]),
-    })
-
-    df_anomalies = df_test[df_test["inducteur_1"] > 115].copy()
-
-    state_test = {
-        "question": "Y a-t-il des anomalies sur les capteurs ?",
-        "target_column": "inducteur_1",
-        "user_profile": "ingenieur",
-        "confidence": "haute",
-        "numero_lot": "LOT-2026-0142",
-        "operateur": "Martin D.",
-        "recette_active": "Cuisson_A3",
-        "agents_called": [
-            "agent_1", "agent_2", "agent_3",
-            "ZScoreSpecialist", "SpcSpecialist", "EwmaCusumSpecialist",
-            "statistician_judge", "agent_5", "agent_6a", "agent_6b",
-        ],
-        "df_propre": df_test,
-        "df_anomalies": df_anomalies,
+    logging.basicConfig(level=logging.INFO)
+    agent = Agent6cPDF()
+    state = {
+        "question": "Anomalies sur four_3",
+        "target_column": "four_3",
+        "user_profile": "technicien",
+        "priority": "P2",
+        "machine_id": "PRESSE_01",
+        "confidence": "moyenne",
         "rapport_oapc": {
-            "observer": "13 anomalies detectees sur inducteur_1.",
-            "analyser": "max_zscore de 4.7 indique une anomalie significative.",
-            "prescrire": (
-                "Intervention dans les 30 minutes. "
-                "Verifier le capteur concerne."
-            ),
-            "certifier": "IndustrIA v2.1 | inducteur_1 | P2",
+            "observer": "Anomalies détectées.",
+            "analyser": "Dérive possible.",
+            "prescrire": "Vérifier le capteur.",
+            "certifier": "IndustrIA v2.1",
             "priority": "P2",
-            "goal": "detection_anomalies",
-            "user_profile": "ingenieur",
         },
-        "resume_executif": (
-            "L'analyse multi-methodes de l'inducteur 1 "
-            "confirme des anomalies P2. "
-            "Intervention requise sous 30 minutes."
-        ),
-        "interpretations": {
-            "ZScoreSpecialist": (
-                "13 anomalies process detectees sur inducteur_1, zscore max 4.7."
-            ),
-            "SpcSpecialist": (
-                "3 points depassent UCL=115.2. Processus hors controle."
-            ),
-            "EwmaCusumSpecialist": (
-                "Derive progressive confirmee depuis 2026-01-01 01:20."
-            ),
-        },
-        "validated_results": [
-            {
-                "agent": "ZScoreSpecialist",
-                "status": "success",
-                "judge_valid": True,
-                "result": {
-                    "anomalies_count": 13,
-                    "bruit_capteur_count": 2,
-                    "anomalie_process_count": 11,
-                    "max_zscore": 4.7,
-                    "pourcentage_anomalies": 13.0,
-                    "total_points": 100,
-                },
-            },
-            {
-                "agent": "SpcSpecialist",
-                "status": "success",
-                "judge_valid": True,
-                "result": {
-                    "sous_controle": False,
-                    "hors_limites_x": [8, 12, 15],
-                    "UCL_x": 115.2,
-                    "LCL_x": 84.8,
-                },
-            },
-            {
-                "agent": "EwmaCusumSpecialist",
-                "status": "success",
-                "judge_valid": True,
-                "result": {
-                    "derive_detectee": True,
-                    "tendance": {
-                        "direction": "hausse progressive",
-                        "significative": True,
-                        "slope": 0.106,
-                    },
-                    "ewma": {"alertes_count": 55},
-                },
-            },
-        ],
-        "judge_warnings": ["Ne doit pas apparaitre dans le PDF"],
+        "resume_executif": "Synthèse test.",
+        "interpretations": {"ZScoreSpecialist": "13 anomalies."},
+        "validated_results": [],
+        "agents_called": ["agent_5_interpreter"],
     }
-
-    agent = PDFReportAgent()
-    result = agent.run(state_test)
-
-    print(f"Status   : {result['status']}")
-    print(f"PDF      : {result['pdf_path']}")
-    print(f"Pages    : {result['pages']}")
-    print(f"SHA-256  : {result['sha256'][:32]}...")
-    print(f"Temps    : {result['execution_time_ms']}ms")
-
-    if result["status"] == "success":
-        print(f"\nPDF genere -> {result['pdf_path']}")
+    out = agent.run(state)
+    print(out)

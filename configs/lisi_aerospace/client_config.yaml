@@ -1,0 +1,815 @@
+# ============================================================
+# CLIENT CONFIG — IndustrIA v2.0
+# Client : LISI Aerospace — Toulouse
+# Auteur : Ahmed Khaili
+# Date   : Mai 2026
+# ============================================================
+
+client:
+  nom: "LISI Aerospace"
+  site: "Toulouse"
+  secteur: "aeronautique"
+  langue: "fr"
+  version: "1.0"
+  changelog:
+    - version: "1.0"
+      date: "2026-05-22"
+      auteur: "Ahmed Khaili"
+      note: "Configuration initiale LISI Aerospace"
+
+# ============================================================
+# DATASET — 16 colonnes du CSV brut
+# ============================================================
+
+dataset:
+  format: "LONG"
+  source: "csv"
+  fichier: "data/lisi_capteurs.csv"
+  separateur: ";"
+  encoding: "utf-8"
+
+  colonnes:
+    temps:      "Date"
+    valeur:     "Value"
+    tag:        "Tag"
+    piece:      "Designation Reference"
+    operation:  "Operation"
+    lti:        "LTI"
+    lts:        "LTS"
+    nominal:    "Nominal"
+    machine:    "Numero Machine"
+    matrice:    "Ref_Matrice"
+    pas_e_fournisseur:      "PAS_E_Fournisseur"
+    pas_e_niveau_retaille:  "PAS_E_Niveau_Retaille"
+    pas_e_numero_passage:   "PAS_E_Numero_Passage"
+    pas_i_fournisseur:      "PAS_I_Fournisseur"
+    pas_i_niveau_retaille:  "PAS_I_Niveau_Retaille"
+    pas_i_numero_passage:   "PAS_I_Numero_Passage"
+
+  operations_actives: ["FILAGE", "EQUATOR"]
+
+  modeles_actifs:
+    - "M2L1A1C"
+    - "M2L1B"
+    - "M3L1A1C"
+    - "M3L1B"
+    - "M4L1A1C"
+    - "M4L1B"
+    - "RD2L1A1C"
+    - "RD3L1A1C"
+    - "RD4L1A1C"
+    - "RD4L1B"
+
+  # Parsing S1 — spécifique client (synonymes, patterns pièce)
+  s1_parsing:
+    piece_patterns:
+      - '\b(M[234]L1[A-Z0-9]+|RD[234]L1[A-Z0-9]+)\b'
+      - '\b(M[A-Z0-9]{3,}|RD[A-Z0-9]{3,})\b'
+    operations_synonymes:
+      FILAGE: [filage, lfilage, au filage]
+      EQUATOR: [equator, lequator, à l equator, a l equator]
+
+  # Numero Machine = presse si FILAGE, four si EQUATOR
+  machine_sens_par_operation:
+    FILAGE:  "presse hydraulique"
+    EQUATOR: "four de contrôle métrologique"
+
+  # Ref_Matrice uniquement renseignée sur EQUATOR
+  colonnes_par_operation:
+    FILAGE:
+      pertinentes:
+        - "PAS_E_Fournisseur"
+        - "PAS_E_Niveau_Retaille"
+        - "PAS_E_Numero_Passage"
+        - "PAS_I_Fournisseur"
+        - "PAS_I_Niveau_Retaille"
+        - "PAS_I_Numero_Passage"
+        - "Numero Machine"
+      non_pertinentes:
+        - "Ref_Matrice"
+    EQUATOR:
+      pertinentes:
+        - "Ref_Matrice"
+        - "Numero Machine"
+      non_pertinentes:
+        - "PAS_E_Fournisseur"
+        - "PAS_E_Niveau_Retaille"
+        - "PAS_E_Numero_Passage"
+        - "PAS_I_Fournisseur"
+        - "PAS_I_Niveau_Retaille"
+        - "PAS_I_Numero_Passage"
+
+  regles_nettoyage:
+    PAS_E_Niveau_Retaille:
+      condition: "<= 0"
+      action: "supprimer_si_invalide"
+      description: "Niveau retaille pastille ext doit être négatif ou nul"
+    PAS_I_Niveau_Retaille:
+      condition: "<= 0"
+      action: "supprimer_si_invalide"
+      description: "Niveau retaille pastille int doit être négatif ou nul"
+    PAS_E_Numero_Passage:
+      valeurs_valides: ["P1", "P2"]
+      action: "supprimer_si_invalide"
+      description: "Passage pastille ext doit être P1 ou P2"
+    PAS_I_Numero_Passage:
+      valeurs_valides: ["P1", "P2"]
+      action: "supprimer_si_invalide"
+      description: "Passage pastille int doit être P1 ou P2"
+
+# ============================================================
+# ENTITES — dictionnaire métier vectorisable pour S1
+# Chaque entité a une description en langage naturel
+# ============================================================
+
+entites:
+
+  facteurs_analyse:
+    FILAGE:
+      fournisseur:
+        description: "fournisseur des pastilles extérieures et intérieures utilisées lors du filage"
+        colonne_ext: "PAS_E_Fournisseur"
+        colonne_int: "PAS_I_Fournisseur"
+        synonymes: [fournisseur pastille, origine pastille, fabricant pastille, pastille fournisseur, pastile, pastilles]
+      niveau_retaille:
+        description: "niveau d'usure ou de retaille des pastilles au filage — valeur négative ou nulle"
+        colonne_ext: "PAS_E_Niveau_Retaille"
+        colonne_int: "PAS_I_Niveau_Retaille"
+        synonymes: [retaille, usure, usure pastille, degré de retaille, niveau usure, pastille usée, pastille neuve]
+      passage:
+        description: "numéro de passage de la pastille au filage — P1 ou P2"
+        colonne_ext: "PAS_E_Numero_Passage"
+        colonne_int: "PAS_I_Numero_Passage"
+        synonymes: [numéro passage, premier passage, deuxième passage, P1, P2, nombre de passages]
+    EQUATOR:
+      matrice:
+        description: "référence de la matrice de formage utilisée lors du contrôle métrologique EQUATOR"
+        colonne: "Ref_Matrice"
+        synonymes: [moule, ref matrice, référence matrice, outil de formage, matrice de formage]
+    COMMUN:
+      machine:
+        description: "numéro de la presse au filage ou du four au contrôle EQUATOR — colonne Numero Machine"
+        colonne: "Numero Machine"
+        sens_par_operation:
+          FILAGE: "presse hydraulique"
+          EQUATOR: "four de contrôle métrologique"
+        synonymes: [presse, four, machine, équipement, numéro machine, presse hydraulique, four de contrôle]
+
+  groupes_variables:
+    FILAGE:
+      corde:
+        description: "longueur de corde de l'aube mesurée aux sections CR1 CR2 CR3 lors du filage"
+        pattern_tag: "CR[0-9]"
+        unite: "mm"
+        synonymes: [longueur corde, CR, section corde, corde]
+      epaisseur_ba:
+        description: "épaisseur du bord d'attaque de l'aube mesurée au filage"
+        pattern_tag: "EP_BA"
+        unite: "mm"
+        synonymes: [bord attaque, BA, épaisseur attaque, épaisseur bord attaque]
+      epaisseur_bf:
+        description: "épaisseur du bord de fuite de l'aube mesurée au filage"
+        pattern_tag: "EP_BF"
+        unite: "mm"
+        synonymes: [bord fuite, BF, épaisseur fuite, épaisseur bord fuite]
+      epaisseur_centrale:
+        description: "épaisseur centrale de l'aube mesurée au filage"
+        pattern_tag: "EP_CENTRALE"
+        unite: "mm"
+        synonymes: [épaisseur milieu, section centrale, épaisseur centrale]
+      pastille:
+        description: "mesure liée aux pastilles extérieures et intérieures au filage"
+        pattern_tag: "PAS_E|PAS_I"
+        unite: null
+        synonymes: [pastille, pastile, pastilles, pastille ext, pastille int]
+    EQUATOR:
+      forme:
+        description: "forme géométrique de l'intrados de l'aube mesurée à différentes sections de corde lors du contrôle EQUATOR"
+        pattern_tag: "*_INTRADOS_FORME"
+        unite: "mm"
+        synonymes: [profil, géométrie, forme intrados, profil intrados, forme de l'aube]
+      vrillage:
+        description: "vrillage ou torsion angulaire de l'aube mesurée lors du contrôle EQUATOR"
+        pattern_tag: "*_INTRADOS_VRILLAGE"
+        unite: "mm"
+        synonymes: [torsion, twist, vrillage intrados, angle vrillage]
+      desaxage:
+        description: "désaxage ou décalage latéral de l'aube mesuré lors du contrôle EQUATOR"
+        pattern_tag: "*_INTRADOS_DESAXAGE"
+        unite: "mm"
+        synonymes: [décalage, décentrage, désaxage intrados, décalage latéral]
+      veine:
+        description: "mesure de veine ou de surface de l'aube par scan laser lors du contrôle EQUATOR"
+        pattern_tag: "VEINE_SCAN_*"
+        unite: "mm"
+        synonymes: [scan veine, surface veine, mesure laser, veine scan]
+
+  intentions:
+
+    conformite:
+      description: "vérifier si les mesures respectent les tolérances LTI et LTS et si les pièces sont conformes EN9100"
+      synonymes:
+        - "conformes"
+        - "bonnes"
+        - "dans les tolérances"
+        - "qualité"
+        - "Cpk"
+        - "anomalies"
+        - "défauts"
+        - "hors tolérance"
+        - "sont bonnes"
+        - "respectent"
+
+    comparaison_groupes:
+      description: "comparer l'impact d'un ou plusieurs facteurs sur la qualité des mesures entre groupes"
+      synonymes:
+        - "impact"
+        - "influence"
+        - "différence"
+        - "comparer"
+        - "meilleur"
+        - "moins bon"
+        - "qui"
+        - "lequel"
+        - "entre"
+        - "versus"
+
+    tendance:
+      description: "détecter une dérive progressive ou une évolution dans le temps des mesures"
+      synonymes:
+        - "dérive"
+        - "évolution"
+        - "tendance"
+        - "progression"
+        - "augmente"
+        - "diminue"
+        - "stable"
+        - "dérive dans le temps"
+
+    anomalie:
+      description: "détecter des valeurs aberrantes ponctuelles ou anormales dans les mesures"
+      synonymes:
+        - "anomalie"
+        - "aberrant"
+        - "suspect"
+        - "bizarre"
+        - "anormal"
+        - "pic"
+        - "valeur extrême"
+
+# ============================================================
+# PIECES — hiérarchie industrielle avec tolérances complètes
+# ============================================================
+
+pieces:
+
+  M2L1A1C:
+    description: "Aube basse pression — famille M2 variante A1C"
+    operations:
+      FILAGE:
+        group_by_defaut: "PAS_E_Fournisseur"
+        tags:
+          CR1:         {lti: 57.19, lts: 58.19, nominal: 57.69, unite: "mm"}
+          CR2:         {lti: 56.89, lts: 57.89, nominal: 57.39, unite: "mm"}
+          CR3:         {lti: 57.19, lts: 58.19, nominal: 57.69, unite: "mm"}
+          EP_BA:       {lti: 3.44,  lts: 4.04,  nominal: 3.74,  unite: "mm"}
+          EP_BF:       {lti: 1.90,  lts: 2.50,  nominal: 2.20,  unite: "mm"}
+          EP_CENTRALE: {lti: 4.06,  lts: 4.66,  nominal: 4.36,  unite: "mm"}
+          PAS_E:       {lti: null,  lts: null,   nominal: null,  unite: null}
+          PAS_I:       {lti: null,  lts: null,   nominal: null,  unite: null}
+      EQUATOR:
+        group_by_defaut: "Ref_Matrice"
+        tags:
+          CR10_INTRADOS_DESAXAGE:    {lti: -1.00, lts: 1.00,  nominal: 0.0, unite: "mm"}
+          CR10_INTRADOS_FORME:       {lti: 0.00,  lts: 0.20,  nominal: 0.0, unite: "mm"}
+          CR10_INTRADOS_VRILLAGE:    {lti: -0.60, lts: 0.60,  nominal: 0.0, unite: "mm"}
+          CR30_INTRADOS_DESAXAGE:    {lti: -1.00, lts: 1.00,  nominal: 0.0, unite: "mm"}
+          CR30_INTRADOS_FORME:       {lti: 0.00,  lts: 0.20,  nominal: 0.0, unite: "mm"}
+          CR30_INTRADOS_VRILLAGE:    {lti: -0.60, lts: 0.60,  nominal: 0.0, unite: "mm"}
+          CR50_INTRADOS_DESAXAGE:    {lti: -1.00, lts: 1.00,  nominal: 0.0, unite: "mm"}
+          CR50_INTRADOS_FORME:       {lti: 0.00,  lts: 0.20,  nominal: 0.0, unite: "mm"}
+          CR50_INTRADOS_VRILLAGE:    {lti: -0.60, lts: 0.60,  nominal: 0.0, unite: "mm"}
+          CR70_INTRADOS_DESAXAGE:    {lti: -1.00, lts: 1.00,  nominal: 0.0, unite: "mm"}
+          CR70_INTRADOS_FORME:       {lti: 0.00,  lts: 0.20,  nominal: 0.0, unite: "mm"}
+          CR70_INTRADOS_VRILLAGE:    {lti: -0.60, lts: 0.60,  nominal: 0.0, unite: "mm"}
+          CR90_INTRADOS_DESAXAGE:    {lti: -1.00, lts: 1.00,  nominal: 0.0, unite: "mm"}
+          CR90_INTRADOS_FORME:       {lti: 0.00,  lts: 0.20,  nominal: 0.0, unite: "mm"}
+          CR90_INTRADOS_VRILLAGE:    {lti: -0.60, lts: 0.60,  nominal: 0.0, unite: "mm"}
+          VEINE_SCAN_1_MAX_EXTRADOS: {lti: -0.25, lts: 0.60,  nominal: 0.0, unite: "mm"}
+          VEINE_SCAN_1_MIN_EXTRADOS: {lti: -0.25, lts: 0.60,  nominal: 0.0, unite: "mm"}
+          VEINE_SCAN_1_MAX_INTRADOS: {lti: -0.25, lts: 0.25,  nominal: 0.0, unite: "mm"}
+          VEINE_SCAN_1_MIN_INTRADOS: {lti: -0.25, lts: 0.25,  nominal: 0.0, unite: "mm"}
+          VEINE_SCAN_2_MAX_EXTRADOS: {lti: -0.25, lts: 0.60,  nominal: 0.0, unite: "mm"}
+          VEINE_SCAN_2_MIN_EXTRADOS: {lti: -0.25, lts: 0.60,  nominal: 0.0, unite: "mm"}
+          VEINE_SCAN_2_MAX_INTRADOS: {lti: -0.25, lts: 0.25,  nominal: 0.0, unite: "mm"}
+          VEINE_SCAN_2_MIN_INTRADOS: {lti: -0.25, lts: 0.25,  nominal: 0.0, unite: "mm"}
+          VEINE_SCAN_3_MAX_EXTRADOS: {lti: -0.25, lts: 0.60,  nominal: 0.0, unite: "mm"}
+          VEINE_SCAN_3_MIN_EXTRADOS: {lti: -0.25, lts: 0.60,  nominal: 0.0, unite: "mm"}
+          VEINE_SCAN_3_MAX_INTRADOS: {lti: -0.25, lts: 0.25,  nominal: 0.0, unite: "mm"}
+          VEINE_SCAN_3_MIN_INTRADOS: {lti: -0.25, lts: 0.25,  nominal: 0.0, unite: "mm"}
+          VEINE_SCAN_4_MAX_INTRADOS: {lti: -0.25, lts: 0.25,  nominal: 0.0, unite: "mm"}
+          VEINE_SCAN_4_MIN_INTRADOS: {lti: -0.25, lts: 0.25,  nominal: 0.0, unite: "mm"}
+
+  M2L1B:
+    description: "Aube basse pression — famille M2 variante B"
+    operations:
+      FILAGE:
+        group_by_defaut: "PAS_E_Fournisseur"
+        tags:
+          CR1:         {lti: 58.68, lts: 59.68, nominal: 59.18, unite: "mm"}
+          CR2:         {lti: 58.68, lts: 59.68, nominal: 59.18, unite: "mm"}
+          CR3:         {lti: 58.68, lts: 59.68, nominal: 59.18, unite: "mm"}
+          EP_BA:       {lti: 3.57,  lts: 4.17,  nominal: 3.87,  unite: "mm"}
+          EP_BF:       {lti: 2.34,  lts: 2.94,  nominal: 2.64,  unite: "mm"}
+          EP_CENTRALE: {lti: 3.88,  lts: 4.48,  nominal: 4.18,  unite: "mm"}
+          PAS_E:       {lti: null,  lts: null,   nominal: null,  unite: null}
+          PAS_I:       {lti: null,  lts: null,   nominal: null,  unite: null}
+      EQUATOR:
+        group_by_defaut: "Ref_Matrice"
+        tags:
+          CR10_INTRADOS_DESAXAGE:    {lti: -1.00, lts: 1.00,  nominal: 0.0, unite: "mm"}
+          CR10_INTRADOS_FORME:       {lti: 0.00,  lts: 0.20,  nominal: 0.0, unite: "mm"}
+          CR10_INTRADOS_VRILLAGE:    {lti: -0.60, lts: 0.60,  nominal: 0.0, unite: "mm"}
+          CR33_INTRADOS_DESAXAGE:    {lti: -1.00, lts: 1.00,  nominal: 0.0, unite: "mm"}
+          CR33_INTRADOS_FORME:       {lti: 0.00,  lts: 0.20,  nominal: 0.0, unite: "mm"}
+          CR33_INTRADOS_VRILLAGE:    {lti: -0.60, lts: 0.60,  nominal: 0.0, unite: "mm"}
+          CR50_INTRADOS_DESAXAGE:    {lti: -1.00, lts: 1.00,  nominal: 0.0, unite: "mm"}
+          CR50_INTRADOS_FORME:       {lti: 0.00,  lts: 0.20,  nominal: 0.0, unite: "mm"}
+          CR50_INTRADOS_VRILLAGE:    {lti: -0.60, lts: 0.60,  nominal: 0.0, unite: "mm"}
+          CR69_INTRADOS_DESAXAGE:    {lti: -1.00, lts: 1.00,  nominal: 0.0, unite: "mm"}
+          CR69_INTRADOS_FORME:       {lti: 0.00,  lts: 0.20,  nominal: 0.0, unite: "mm"}
+          CR69_INTRADOS_VRILLAGE:    {lti: -0.60, lts: 0.60,  nominal: 0.0, unite: "mm"}
+          CR90_INTRADOS_DESAXAGE:    {lti: -1.00, lts: 1.00,  nominal: 0.0, unite: "mm"}
+          CR90_INTRADOS_FORME:       {lti: 0.00,  lts: 0.20,  nominal: 0.0, unite: "mm"}
+          CR90_INTRADOS_VRILLAGE:    {lti: -0.60, lts: 0.60,  nominal: 0.0, unite: "mm"}
+          VEINE_SCAN_1_MAX_EXTRADOS: {lti: -0.25, lts: 0.25,  nominal: 0.0, unite: "mm"}
+          VEINE_SCAN_1_MIN_EXTRADOS: {lti: -0.25, lts: 0.25,  nominal: 0.0, unite: "mm"}
+          VEINE_SCAN_1_MAX_INTRADOS: {lti: -0.25, lts: 0.25,  nominal: 0.0, unite: "mm"}
+          VEINE_SCAN_1_MIN_INTRADOS: {lti: -0.25, lts: 0.25,  nominal: 0.0, unite: "mm"}
+          VEINE_SCAN_2_MAX_EXTRADOS: {lti: -0.25, lts: 0.25,  nominal: 0.0, unite: "mm"}
+          VEINE_SCAN_2_MIN_EXTRADOS: {lti: -0.25, lts: 0.25,  nominal: 0.0, unite: "mm"}
+          VEINE_SCAN_2_MAX_INTRADOS: {lti: -0.25, lts: 0.25,  nominal: 0.0, unite: "mm"}
+          VEINE_SCAN_2_MIN_INTRADOS: {lti: -0.25, lts: 0.25,  nominal: 0.0, unite: "mm"}
+          VEINE_SCAN_3_MAX_EXTRADOS: {lti: -0.25, lts: 0.25,  nominal: 0.0, unite: "mm"}
+          VEINE_SCAN_3_MIN_EXTRADOS: {lti: -0.25, lts: 0.25,  nominal: 0.0, unite: "mm"}
+          VEINE_SCAN_3_MAX_INTRADOS: {lti: -0.25, lts: 0.25,  nominal: 0.0, unite: "mm"}
+          VEINE_SCAN_3_MIN_INTRADOS: {lti: -0.25, lts: 0.25,  nominal: 0.0, unite: "mm"}
+
+  M3L1A1C:
+    description: "Aube basse pression — famille M3 variante A1C"
+    operations:
+      FILAGE:
+        group_by_defaut: "PAS_E_Fournisseur"
+        tags:
+          CR1:         {lti: 44.76, lts: 45.76, nominal: 45.26, unite: "mm"}
+          CR2:         {lti: 44.76, lts: 45.76, nominal: 45.26, unite: "mm"}
+          CR3:         {lti: 44.76, lts: 45.76, nominal: 45.26, unite: "mm"}
+          EP_BA:       {lti: 2.80,  lts: 3.40,  nominal: 3.10,  unite: "mm"}
+          EP_BF:       {lti: 1.58,  lts: 2.18,  nominal: 1.88,  unite: "mm"}
+          EP_CENTRALE: {lti: 3.89,  lts: 4.49,  nominal: 4.19,  unite: "mm"}
+          PAS_E:       {lti: null,  lts: null,   nominal: null,  unite: null}
+          PAS_I:       {lti: null,  lts: null,   nominal: null,  unite: null}
+      EQUATOR:
+        group_by_defaut: "Ref_Matrice"
+        tags:
+          CR10_INTRADOS_DESAXAGE:    {lti: -1.00, lts: 1.00,  nominal: 0.0, unite: "mm"}
+          CR10_INTRADOS_FORME:       {lti: 0.00,  lts: 0.20,  nominal: 0.0, unite: "mm"}
+          CR10_INTRADOS_VRILLAGE:    {lti: -0.60, lts: 0.60,  nominal: 0.0, unite: "mm"}
+          CR30_INTRADOS_DESAXAGE:    {lti: -1.00, lts: 1.00,  nominal: 0.0, unite: "mm"}
+          CR30_INTRADOS_FORME:       {lti: 0.00,  lts: 0.20,  nominal: 0.0, unite: "mm"}
+          CR30_INTRADOS_VRILLAGE:    {lti: -0.60, lts: 0.60,  nominal: 0.0, unite: "mm"}
+          CR50_INTRADOS_DESAXAGE:    {lti: -1.00, lts: 1.00,  nominal: 0.0, unite: "mm"}
+          CR50_INTRADOS_FORME:       {lti: 0.00,  lts: 0.20,  nominal: 0.0, unite: "mm"}
+          CR50_INTRADOS_VRILLAGE:    {lti: -0.60, lts: 0.60,  nominal: 0.0, unite: "mm"}
+          CR70_INTRADOS_DESAXAGE:    {lti: -1.00, lts: 1.00,  nominal: 0.0, unite: "mm"}
+          CR70_INTRADOS_FORME:       {lti: 0.00,  lts: 0.20,  nominal: 0.0, unite: "mm"}
+          CR70_INTRADOS_VRILLAGE:    {lti: -0.60, lts: 0.60,  nominal: 0.0, unite: "mm"}
+          CR90_INTRADOS_DESAXAGE:    {lti: -1.00, lts: 1.00,  nominal: 0.0, unite: "mm"}
+          CR90_INTRADOS_FORME:       {lti: 0.00,  lts: 0.20,  nominal: 0.0, unite: "mm"}
+          CR90_INTRADOS_VRILLAGE:    {lti: -0.60, lts: 0.60,  nominal: 0.0, unite: "mm"}
+          VEINE_SCAN_1_MAX_EXTRADOS: {lti: -0.25, lts: 0.25,  nominal: 0.0, unite: "mm"}
+          VEINE_SCAN_1_MIN_EXTRADOS: {lti: -0.25, lts: 0.25,  nominal: 0.0, unite: "mm"}
+          VEINE_SCAN_1_MAX_INTRADOS: {lti: -0.25, lts: 0.25,  nominal: 0.0, unite: "mm"}
+          VEINE_SCAN_1_MIN_INTRADOS: {lti: -0.25, lts: 0.25,  nominal: 0.0, unite: "mm"}
+          VEINE_SCAN_2_MAX_EXTRADOS: {lti: -0.25, lts: 0.25,  nominal: 0.0, unite: "mm"}
+          VEINE_SCAN_2_MIN_EXTRADOS: {lti: -0.25, lts: 0.25,  nominal: 0.0, unite: "mm"}
+          VEINE_SCAN_2_MAX_INTRADOS: {lti: -0.25, lts: 0.25,  nominal: 0.0, unite: "mm"}
+          VEINE_SCAN_2_MIN_INTRADOS: {lti: -0.25, lts: 0.25,  nominal: 0.0, unite: "mm"}
+          VEINE_SCAN_3_MAX_EXTRADOS: {lti: -0.25, lts: 0.25,  nominal: 0.0, unite: "mm"}
+          VEINE_SCAN_3_MIN_EXTRADOS: {lti: -0.25, lts: 0.25,  nominal: 0.0, unite: "mm"}
+          VEINE_SCAN_3_MAX_INTRADOS: {lti: -0.25, lts: 0.25,  nominal: 0.0, unite: "mm"}
+          VEINE_SCAN_3_MIN_INTRADOS: {lti: -0.25, lts: 0.25,  nominal: 0.0, unite: "mm"}
+
+  M3L1B:
+    description: "Aube basse pression — famille M3 variante B"
+    operations:
+      FILAGE:
+        group_by_defaut: "PAS_E_Fournisseur"
+        tags:
+          CR1:         {lti: 42.30, lts: 43.30, nominal: 42.80, unite: "mm"}
+          CR2:         {lti: 42.30, lts: 43.30, nominal: 42.80, unite: "mm"}
+          CR3:         {lti: 42.30, lts: 43.30, nominal: 42.80, unite: "mm"}
+          EP_BA:       {lti: 2.80,  lts: 3.40,  nominal: 3.10,  unite: "mm"}
+          EP_BF:       {lti: 1.58,  lts: 2.18,  nominal: 1.88,  unite: "mm"}
+          EP_CENTRALE: {lti: 2.82,  lts: 3.42,  nominal: 3.12,  unite: "mm"}
+          PAS_E:       {lti: null,  lts: null,   nominal: null,  unite: null}
+          PAS_I:       {lti: null,  lts: null,   nominal: null,  unite: null}
+      EQUATOR:
+        group_by_defaut: "Ref_Matrice"
+        tags:
+          CR10_INTRADOS_DESAXAGE:    {lti: -1.00, lts: 1.00,  nominal: 0.0, unite: "mm"}
+          CR10_INTRADOS_FORME:       {lti: 0.00,  lts: 0.20,  nominal: 0.0, unite: "mm"}
+          CR10_INTRADOS_VRILLAGE:    {lti: -0.60, lts: 0.60,  nominal: 0.0, unite: "mm"}
+          CR33_INTRADOS_DESAXAGE:    {lti: -1.00, lts: 1.00,  nominal: 0.0, unite: "mm"}
+          CR33_INTRADOS_FORME:       {lti: 0.00,  lts: 0.20,  nominal: 0.0, unite: "mm"}
+          CR33_INTRADOS_VRILLAGE:    {lti: -0.60, lts: 0.60,  nominal: 0.0, unite: "mm"}
+          CR50_INTRADOS_DESAXAGE:    {lti: -1.00, lts: 1.00,  nominal: 0.0, unite: "mm"}
+          CR50_INTRADOS_FORME:       {lti: 0.00,  lts: 0.20,  nominal: 0.0, unite: "mm"}
+          CR50_INTRADOS_VRILLAGE:    {lti: -0.60, lts: 0.60,  nominal: 0.0, unite: "mm"}
+          CR69_INTRADOS_DESAXAGE:    {lti: -1.00, lts: 1.00,  nominal: 0.0, unite: "mm"}
+          CR69_INTRADOS_FORME:       {lti: 0.00,  lts: 0.20,  nominal: 0.0, unite: "mm"}
+          CR69_INTRADOS_VRILLAGE:    {lti: -0.60, lts: 0.60,  nominal: 0.0, unite: "mm"}
+          CR90_INTRADOS_DESAXAGE:    {lti: -1.00, lts: 1.00,  nominal: 0.0, unite: "mm"}
+          CR90_INTRADOS_FORME:       {lti: 0.00,  lts: 0.20,  nominal: 0.0, unite: "mm"}
+          CR90_INTRADOS_VRILLAGE:    {lti: -0.60, lts: 0.60,  nominal: 0.0, unite: "mm"}
+          VEINE_SCAN_1_MAX_EXTRADOS: {lti: -0.25, lts: 0.45,  nominal: 0.0, unite: "mm"}
+          VEINE_SCAN_1_MIN_EXTRADOS: {lti: -0.25, lts: 0.45,  nominal: 0.0, unite: "mm"}
+          VEINE_SCAN_1_MAX_INTRADOS: {lti: -0.25, lts: 0.25,  nominal: 0.0, unite: "mm"}
+          VEINE_SCAN_1_MIN_INTRADOS: {lti: -0.25, lts: 0.25,  nominal: 0.0, unite: "mm"}
+          VEINE_SCAN_2_MAX_EXTRADOS: {lti: -0.25, lts: 0.45,  nominal: 0.0, unite: "mm"}
+          VEINE_SCAN_2_MIN_EXTRADOS: {lti: -0.25, lts: 0.45,  nominal: 0.0, unite: "mm"}
+          VEINE_SCAN_2_MAX_INTRADOS: {lti: -0.25, lts: 0.25,  nominal: 0.0, unite: "mm"}
+          VEINE_SCAN_2_MIN_INTRADOS: {lti: -0.25, lts: 0.25,  nominal: 0.0, unite: "mm"}
+          VEINE_SCAN_3_MAX_EXTRADOS: {lti: -0.25, lts: 0.45,  nominal: 0.0, unite: "mm"}
+          VEINE_SCAN_3_MIN_EXTRADOS: {lti: -0.25, lts: 0.45,  nominal: 0.0, unite: "mm"}
+          VEINE_SCAN_3_MAX_INTRADOS: {lti: -0.25, lts: 0.25,  nominal: 0.0, unite: "mm"}
+          VEINE_SCAN_3_MIN_INTRADOS: {lti: -0.25, lts: 0.25,  nominal: 0.0, unite: "mm"}
+
+  M4L1A1C:
+    description: "Aube basse pression — famille M4 variante A1C"
+    operations:
+      FILAGE:
+        group_by_defaut: "PAS_E_Fournisseur"
+        tags:
+          CR1:         {lti: 43.44, lts: 44.44, nominal: 43.94, unite: "mm"}
+          CR2:         {lti: 43.44, lts: 44.44, nominal: 43.94, unite: "mm"}
+          CR3:         {lti: 43.44, lts: 44.44, nominal: 43.94, unite: "mm"}
+          EP_BA:       {lti: 2.59,  lts: 3.19,  nominal: 2.89,  unite: "mm"}
+          EP_BF:       {lti: 1.62,  lts: 2.22,  nominal: 1.92,  unite: "mm"}
+          EP_CENTRALE: {lti: 3.73,  lts: 4.33,  nominal: 4.03,  unite: "mm"}
+          PAS_E:       {lti: null,  lts: null,   nominal: null,  unite: null}
+          PAS_I:       {lti: null,  lts: null,   nominal: null,  unite: null}
+      EQUATOR:
+        group_by_defaut: "Ref_Matrice"
+        tags:
+          CR10_INTRADOS_DESAXAGE:      {lti: -1.00, lts: 1.00,  nominal: 0.0, unite: "mm"}
+          CR10_INTRADOS_FORME:         {lti: 0.00,  lts: 0.20,  nominal: 0.0, unite: "mm"}
+          CR10_INTRADOS_VRILLAGE:      {lti: -0.60, lts: 0.60,  nominal: 0.0, unite: "mm"}
+          CR30_INTRADOS_DESAXAGE:      {lti: -1.00, lts: 1.00,  nominal: 0.0, unite: "mm"}
+          CR30_INTRADOS_FORME:         {lti: 0.00,  lts: 0.20,  nominal: 0.0, unite: "mm"}
+          CR30_INTRADOS_VRILLAGE:      {lti: -0.60, lts: 0.60,  nominal: 0.0, unite: "mm"}
+          CR50_INTRADOS_DESAXAGE:      {lti: -1.00, lts: 1.00,  nominal: 0.0, unite: "mm"}
+          CR50_INTRADOS_FORME:         {lti: 0.00,  lts: 0.20,  nominal: 0.0, unite: "mm"}
+          CR50_INTRADOS_VRILLAGE:      {lti: -0.60, lts: 0.60,  nominal: 0.0, unite: "mm"}
+          CR70_INTRADOS_DESAXAGE:      {lti: -1.00, lts: 1.00,  nominal: 0.0, unite: "mm"}
+          CR70_INTRADOS_FORME:         {lti: 0.00,  lts: 0.20,  nominal: 0.0, unite: "mm"}
+          CR70_INTRADOS_VRILLAGE:      {lti: -0.60, lts: 0.60,  nominal: 0.0, unite: "mm"}
+          CR90_INTRADOS_DESAXAGE:      {lti: -1.00, lts: 1.00,  nominal: 0.0, unite: "mm"}
+          CR90_INTRADOS_FORME:         {lti: 0.00,  lts: 0.20,  nominal: 0.0, unite: "mm"}
+          CR90_INTRADOS_VRILLAGE:      {lti: -0.60, lts: 0.60,  nominal: 0.0, unite: "mm"}
+          VEINE_SCAN_1_2_MAX_EXTRADOS: {lti: -0.25, lts: 0.50,  nominal: 0.0, unite: "mm"}
+          VEINE_SCAN_1_2_MIN_EXTRADOS: {lti: -0.25, lts: 0.50,  nominal: 0.0, unite: "mm"}
+          VEINE_SCAN_1_MAX_EXTRADOS:   {lti: -0.25, lts: 0.25,  nominal: 0.0, unite: "mm"}
+          VEINE_SCAN_1_MIN_EXTRADOS:   {lti: -0.25, lts: 0.25,  nominal: 0.0, unite: "mm"}
+          VEINE_SCAN_1_MAX_INTRADOS:   {lti: -0.25, lts: 0.25,  nominal: 0.0, unite: "mm"}
+          VEINE_SCAN_1_MIN_INTRADOS:   {lti: -0.25, lts: 0.25,  nominal: 0.0, unite: "mm"}
+          VEINE_SCAN_2_MAX_EXTRADOS:   {lti: -0.25, lts: 0.25,  nominal: 0.0, unite: "mm"}
+          VEINE_SCAN_2_MIN_EXTRADOS:   {lti: -0.25, lts: 0.25,  nominal: 0.0, unite: "mm"}
+          VEINE_SCAN_2_MAX_INTRADOS:   {lti: -0.25, lts: 0.25,  nominal: 0.0, unite: "mm"}
+          VEINE_SCAN_2_MIN_INTRADOS:   {lti: -0.25, lts: 0.25,  nominal: 0.0, unite: "mm"}
+          VEINE_SCAN_3_MAX_EXTRADOS:   {lti: -0.25, lts: 0.25,  nominal: 0.0, unite: "mm"}
+          VEINE_SCAN_3_MIN_EXTRADOS:   {lti: -0.25, lts: 0.25,  nominal: 0.0, unite: "mm"}
+          VEINE_SCAN_3_MAX_INTRADOS:   {lti: -0.25, lts: 0.25,  nominal: 0.0, unite: "mm"}
+          VEINE_SCAN_3_MIN_INTRADOS:   {lti: -0.25, lts: 0.25,  nominal: 0.0, unite: "mm"}
+          VEINE_SCAN_4_MAX_INTRADOS:   {lti: -0.25, lts: 0.25,  nominal: 0.0, unite: "mm"}
+          VEINE_SCAN_4_MIN_INTRADOS:   {lti: -0.25, lts: 0.25,  nominal: 0.0, unite: "mm"}
+
+  M4L1B:
+    description: "Aube basse pression — famille M4 variante B"
+    operations:
+      FILAGE:
+        group_by_defaut: "PAS_E_Fournisseur"
+        tags:
+          CR1:         {lti: 39.00, lts: 40.00, nominal: 39.50, unite: "mm"}
+          CR2:         {lti: 39.00, lts: 40.00, nominal: 39.50, unite: "mm"}
+          CR3:         {lti: 39.00, lts: 40.00, nominal: 39.50, unite: "mm"}
+          EP_BA:       {lti: 2.80,  lts: 3.40,  nominal: 3.10,  unite: "mm"}
+          EP_BF:       {lti: 2.09,  lts: 2.69,  nominal: 2.39,  unite: "mm"}
+          EP_CENTRALE: {lti: 3.82,  lts: 4.22,  nominal: 4.02,  unite: "mm"}
+          PAS_E:       {lti: null,  lts: null,   nominal: null,  unite: null}
+          PAS_I:       {lti: null,  lts: null,   nominal: null,  unite: null}
+      EQUATOR:
+        group_by_defaut: "Ref_Matrice"
+        tags:
+          CR10_INTRADOS_DESAXAGE:      {lti: -1.00, lts: 1.00,  nominal: 0.0, unite: "mm"}
+          CR10_INTRADOS_FORME:         {lti: 0.00,  lts: 0.20,  nominal: 0.0, unite: "mm"}
+          CR10_INTRADOS_VRILLAGE:      {lti: -0.60, lts: 0.60,  nominal: 0.0, unite: "mm"}
+          CR16_INTRADOS_DESAXAGE:      {lti: -1.00, lts: 1.00,  nominal: 0.0, unite: "mm"}
+          CR16_INTRADOS_FORME:         {lti: 0.00,  lts: 0.20,  nominal: 0.0, unite: "mm"}
+          CR16_INTRADOS_VRILLAGE:      {lti: -0.60, lts: 0.60,  nominal: 0.0, unite: "mm"}
+          CR33_INTRADOS_DESAXAGE:      {lti: -1.00, lts: 1.00,  nominal: 0.0, unite: "mm"}
+          CR33_INTRADOS_FORME:         {lti: 0.00,  lts: 0.20,  nominal: 0.0, unite: "mm"}
+          CR33_INTRADOS_VRILLAGE:      {lti: -0.60, lts: 0.60,  nominal: 0.0, unite: "mm"}
+          CR50_INTRADOS_DESAXAGE:      {lti: -1.00, lts: 1.00,  nominal: 0.0, unite: "mm"}
+          CR50_INTRADOS_FORME:         {lti: 0.00,  lts: 0.20,  nominal: 0.0, unite: "mm"}
+          CR50_INTRADOS_VRILLAGE:      {lti: -0.60, lts: 0.60,  nominal: 0.0, unite: "mm"}
+          CR73_INTRADOS_DESAXAGE:      {lti: -1.00, lts: 1.00,  nominal: 0.0, unite: "mm"}
+          CR73_INTRADOS_FORME:         {lti: 0.00,  lts: 0.20,  nominal: 0.0, unite: "mm"}
+          CR73_INTRADOS_VRILLAGE:      {lti: -0.60, lts: 0.60,  nominal: 0.0, unite: "mm"}
+          CR90_INTRADOS_DESAXAGE:      {lti: -1.00, lts: 1.00,  nominal: 0.0, unite: "mm"}
+          CR90_INTRADOS_FORME:         {lti: 0.00,  lts: 0.20,  nominal: 0.0, unite: "mm"}
+          CR90_INTRADOS_VRILLAGE:      {lti: -0.60, lts: 0.60,  nominal: 0.0, unite: "mm"}
+          CR_BRIDAGE_INTRADOS_DESAXAGE: {lti: -1.00, lts: 1.00, nominal: 0.0, unite: "mm"}
+          CR_BRIDAGE_INTRADOS_FORME:    {lti: 0.00,  lts: 0.20, nominal: 0.0, unite: "mm"}
+          CR_BRIDAGE_INTRADOS_VRILLAGE: {lti: -0.60, lts: 0.60, nominal: 0.0, unite: "mm"}
+          VEINE_SCAN_1_MAX_EXTRADOS:   {lti: -0.25, lts: 0.25,  nominal: 0.0, unite: "mm"}
+          VEINE_SCAN_1_MIN_EXTRADOS:   {lti: -0.25, lts: 0.25,  nominal: 0.0, unite: "mm"}
+          VEINE_SCAN_1_MAX_INTRADOS:   {lti: -0.25, lts: 0.25,  nominal: 0.0, unite: "mm"}
+          VEINE_SCAN_1_MIN_INTRADOS:   {lti: -0.25, lts: 0.25,  nominal: 0.0, unite: "mm"}
+          VEINE_SCAN_2_MAX_EXTRADOS:   {lti: -0.25, lts: 0.25,  nominal: 0.0, unite: "mm"}
+          VEINE_SCAN_2_MIN_EXTRADOS:   {lti: -0.25, lts: 0.25,  nominal: 0.0, unite: "mm"}
+          VEINE_SCAN_2_MAX_INTRADOS:   {lti: -0.25, lts: 0.25,  nominal: 0.0, unite: "mm"}
+          VEINE_SCAN_2_MIN_INTRADOS:   {lti: -0.25, lts: 0.25,  nominal: 0.0, unite: "mm"}
+
+  RD2L1A1C:
+    description: "Aube haute pression — famille RD2"
+    operations:
+      FILAGE:
+        group_by_defaut: "PAS_E_Fournisseur"
+        tags:
+          CR1:         {lti: 44.40, lts: 45.40, nominal: 44.90, unite: "mm"}
+          CR2:         {lti: 44.10, lts: 45.10, nominal: 44.60, unite: "mm"}
+          CR3:         {lti: 44.40, lts: 45.40, nominal: 44.90, unite: "mm"}
+          EP_BA:       {lti: 2.22,  lts: 2.82,  nominal: 2.52,  unite: "mm"}
+          EP_BF:       {lti: 1.25,  lts: 1.85,  nominal: 1.55,  unite: "mm"}
+          EP_CENTRALE: {lti: 2.91,  lts: 3.51,  nominal: 3.22,  unite: "mm"}
+          PAS_E:       {lti: null,  lts: null,   nominal: null,  unite: null}
+          PAS_I:       {lti: null,  lts: null,   nominal: null,  unite: null}
+      EQUATOR:
+        group_by_defaut: "Ref_Matrice"
+        tags:
+          CR10_INTRADOS_DESAXAGE: {lti: -1.00, lts: 1.00,  nominal: 0.0, unite: "mm"}
+          CR10_INTRADOS_FORME:    {lti: 0.00,  lts: 0.20,  nominal: 0.0, unite: "mm"}
+          CR10_INTRADOS_VRILLAGE: {lti: -0.33, lts: 0.33,  nominal: 0.0, unite: "mm"}
+          CR30_INTRADOS_DESAXAGE: {lti: -1.00, lts: 1.00,  nominal: 0.0, unite: "mm"}
+          CR30_INTRADOS_FORME:    {lti: 0.00,  lts: 0.20,  nominal: 0.0, unite: "mm"}
+          CR30_INTRADOS_VRILLAGE: {lti: -0.33, lts: 0.33,  nominal: 0.0, unite: "mm"}
+          CR50_INTRADOS_DESAXAGE: {lti: -1.00, lts: 1.00,  nominal: 0.0, unite: "mm"}
+          CR50_INTRADOS_FORME:    {lti: 0.00,  lts: 0.20,  nominal: 0.0, unite: "mm"}
+          CR50_INTRADOS_VRILLAGE: {lti: -0.33, lts: 0.33,  nominal: 0.0, unite: "mm"}
+          CR70_INTRADOS_DESAXAGE: {lti: -1.00, lts: 1.00,  nominal: 0.0, unite: "mm"}
+          CR70_INTRADOS_FORME:    {lti: 0.00,  lts: 0.20,  nominal: 0.0, unite: "mm"}
+          CR70_INTRADOS_VRILLAGE: {lti: -0.33, lts: 0.33,  nominal: 0.0, unite: "mm"}
+          CR90_INTRADOS_DESAXAGE: {lti: -1.00, lts: 1.00,  nominal: 0.0, unite: "mm"}
+          CR90_INTRADOS_FORME:    {lti: 0.00,  lts: 0.20,  nominal: 0.0, unite: "mm"}
+          CR90_INTRADOS_VRILLAGE: {lti: -0.33, lts: 0.33,  nominal: 0.0, unite: "mm"}
+          VEINE_SCAN_1_MAX:       {lti: -0.10, lts: 0.10,  nominal: 0.0, unite: "mm"}
+          VEINE_SCAN_1_MIN:       {lti: -0.10, lts: 0.10,  nominal: 0.0, unite: "mm"}
+          VEINE_SCAN_2_MAX:       {lti: -0.10, lts: 0.10,  nominal: 0.0, unite: "mm"}
+          VEINE_SCAN_2_MIN:       {lti: -0.10, lts: 0.10,  nominal: 0.0, unite: "mm"}
+          VEINE_SCAN_3_MAX:       {lti: 0.10,  lts: 0.60,  nominal: 0.0, unite: "mm"}
+          VEINE_SCAN_3_MIN:       {lti: 0.10,  lts: 0.60,  nominal: 0.0, unite: "mm"}
+          VEINE_SCAN_4_MAX:       {lti: 0.10,  lts: 0.60,  nominal: 0.0, unite: "mm"}
+          VEINE_SCAN_4_MIN:       {lti: 0.10,  lts: 0.60,  nominal: 0.0, unite: "mm"}
+
+  RD3L1A1C:
+    description: "Aube haute pression — famille RD3"
+    operations:
+      FILAGE:
+        group_by_defaut: "PAS_E_Fournisseur"
+        tags:
+          CR1:         {lti: 38.61, lts: 39.61, nominal: 39.11, unite: "mm"}
+          CR2:         {lti: 38.61, lts: 39.61, nominal: 39.11, unite: "mm"}
+          CR3:         {lti: 38.61, lts: 39.61, nominal: 39.11, unite: "mm"}
+          EP_BA:       {lti: 2.34,  lts: 2.94,  nominal: 2.64,  unite: "mm"}
+          EP_BF:       {lti: 1.59,  lts: 2.19,  nominal: 1.89,  unite: "mm"}
+          EP_CENTRALE: {lti: 3.49,  lts: 4.09,  nominal: 3.79,  unite: "mm"}
+          PAS_E:       {lti: null,  lts: null,   nominal: null,  unite: null}
+          PAS_I:       {lti: null,  lts: null,   nominal: null,  unite: null}
+      EQUATOR:
+        group_by_defaut: "Ref_Matrice"
+        tags:
+          CR10_INTRADOS_DESAXAGE: {lti: -1.00, lts: 1.00,  nominal: 0.0, unite: "mm"}
+          CR10_INTRADOS_FORME:    {lti: 0.00,  lts: 0.20,  nominal: 0.0, unite: "mm"}
+          CR10_INTRADOS_VRILLAGE: {lti: -0.33, lts: 0.33,  nominal: 0.0, unite: "mm"}
+          CR30_INTRADOS_DESAXAGE: {lti: -1.00, lts: 1.00,  nominal: 0.0, unite: "mm"}
+          CR30_INTRADOS_FORME:    {lti: 0.00,  lts: 0.20,  nominal: 0.0, unite: "mm"}
+          CR30_INTRADOS_VRILLAGE: {lti: -0.33, lts: 0.33,  nominal: 0.0, unite: "mm"}
+          CR50_INTRADOS_DESAXAGE: {lti: -1.00, lts: 1.00,  nominal: 0.0, unite: "mm"}
+          CR50_INTRADOS_FORME:    {lti: 0.00,  lts: 0.20,  nominal: 0.0, unite: "mm"}
+          CR50_INTRADOS_VRILLAGE: {lti: -0.33, lts: 0.33,  nominal: 0.0, unite: "mm"}
+          CR70_INTRADOS_DESAXAGE: {lti: -1.00, lts: 1.00,  nominal: 0.0, unite: "mm"}
+          CR70_INTRADOS_FORME:    {lti: 0.00,  lts: 0.20,  nominal: 0.0, unite: "mm"}
+          CR70_INTRADOS_VRILLAGE: {lti: -0.33, lts: 0.33,  nominal: 0.0, unite: "mm"}
+          CR90_INTRADOS_DESAXAGE: {lti: -1.00, lts: 1.00,  nominal: 0.0, unite: "mm"}
+          CR90_INTRADOS_FORME:    {lti: 0.00,  lts: 0.20,  nominal: 0.0, unite: "mm"}
+          CR90_INTRADOS_VRILLAGE: {lti: -0.33, lts: 0.33,  nominal: 0.0, unite: "mm"}
+          VEINE_SCAN_1_MAX:       {lti: -0.10, lts: 0.10,  nominal: 0.0, unite: "mm"}
+          VEINE_SCAN_1_MIN:       {lti: -0.10, lts: 0.10,  nominal: 0.0, unite: "mm"}
+          VEINE_SCAN_2_MAX:       {lti: -0.10, lts: 0.10,  nominal: 0.0, unite: "mm"}
+          VEINE_SCAN_2_MIN:       {lti: -0.10, lts: 0.10,  nominal: 0.0, unite: "mm"}
+          VEINE_SCAN_3_MAX:       {lti: 0.10,  lts: 0.60,  nominal: 0.0, unite: "mm"}
+          VEINE_SCAN_3_MIN:       {lti: 0.10,  lts: 0.60,  nominal: 0.0, unite: "mm"}
+          VEINE_SCAN_4_MAX:       {lti: 0.10,  lts: 0.60,  nominal: 0.0, unite: "mm"}
+          VEINE_SCAN_4_MIN:       {lti: 0.10,  lts: 0.60,  nominal: 0.0, unite: "mm"}
+
+  RD4L1A1C:
+    description: "Aube haute pression — famille RD4 variante A1C"
+    operations:
+      FILAGE:
+        group_by_defaut: "PAS_E_Fournisseur"
+        tags:
+          CR1:         {lti: 40.87, lts: 41.87, nominal: 41.37, unite: "mm"}
+          CR2:         {lti: 40.87, lts: 41.87, nominal: 41.37, unite: "mm"}
+          CR3:         {lti: 40.87, lts: 41.87, nominal: 41.37, unite: "mm"}
+          EP_BA:       {lti: 2.77,  lts: 3.37,  nominal: 3.07,  unite: "mm"}
+          EP_BF:       {lti: 1.75,  lts: 2.35,  nominal: 2.05,  unite: "mm"}
+          EP_CENTRALE: {lti: 3.32,  lts: 3.92,  nominal: 3.62,  unite: "mm"}
+          PAS_E:       {lti: null,  lts: null,   nominal: null,  unite: null}
+          PAS_I:       {lti: null,  lts: null,   nominal: null,  unite: null}
+      EQUATOR:
+        group_by_defaut: "Ref_Matrice"
+        tags:
+          CR10_INTRADOS_DESAXAGE: {lti: -1.00, lts: 1.00,  nominal: 0.0, unite: "mm"}
+          CR10_INTRADOS_FORME:    {lti: 0.00,  lts: 0.20,  nominal: 0.0, unite: "mm"}
+          CR10_INTRADOS_VRILLAGE: {lti: -0.33, lts: 0.33,  nominal: 0.0, unite: "mm"}
+          CR30_INTRADOS_DESAXAGE: {lti: -1.00, lts: 1.00,  nominal: 0.0, unite: "mm"}
+          CR30_INTRADOS_FORME:    {lti: 0.00,  lts: 0.20,  nominal: 0.0, unite: "mm"}
+          CR30_INTRADOS_VRILLAGE: {lti: -0.33, lts: 0.33,  nominal: 0.0, unite: "mm"}
+          CR50_INTRADOS_DESAXAGE: {lti: -1.00, lts: 1.00,  nominal: 0.0, unite: "mm"}
+          CR50_INTRADOS_FORME:    {lti: 0.00,  lts: 0.20,  nominal: 0.0, unite: "mm"}
+          CR50_INTRADOS_VRILLAGE: {lti: -0.33, lts: 0.33,  nominal: 0.0, unite: "mm"}
+          CR70_INTRADOS_DESAXAGE: {lti: -1.00, lts: 1.00,  nominal: 0.0, unite: "mm"}
+          CR70_INTRADOS_FORME:    {lti: 0.00,  lts: 0.20,  nominal: 0.0, unite: "mm"}
+          CR70_INTRADOS_VRILLAGE: {lti: -0.33, lts: 0.33,  nominal: 0.0, unite: "mm"}
+          CR90_INTRADOS_DESAXAGE: {lti: -1.00, lts: 1.00,  nominal: 0.0, unite: "mm"}
+          CR90_INTRADOS_FORME:    {lti: 0.00,  lts: 0.20,  nominal: 0.0, unite: "mm"}
+          CR90_INTRADOS_VRILLAGE: {lti: -0.33, lts: 0.33,  nominal: 0.0, unite: "mm"}
+          VEINE_SCAN_1_MAX:       {lti: -0.10, lts: 0.10,  nominal: 0.0, unite: "mm"}
+          VEINE_SCAN_1_MIN:       {lti: -0.10, lts: 0.10,  nominal: 0.0, unite: "mm"}
+          VEINE_SCAN_2_MAX:       {lti: -0.10, lts: 0.10,  nominal: 0.0, unite: "mm"}
+          VEINE_SCAN_2_MIN:       {lti: -0.10, lts: 0.10,  nominal: 0.0, unite: "mm"}
+          VEINE_SCAN_3_MAX:       {lti: 0.10,  lts: 0.60,  nominal: 0.0, unite: "mm"}
+          VEINE_SCAN_3_MIN:       {lti: 0.10,  lts: 0.60,  nominal: 0.0, unite: "mm"}
+          VEINE_SCAN_4_MAX:       {lti: 0.10,  lts: 0.60,  nominal: 0.0, unite: "mm"}
+          VEINE_SCAN_4_MIN:       {lti: 0.10,  lts: 0.60,  nominal: 0.0, unite: "mm"}
+
+  RD4L1B:
+    description: "Aube haute pression — famille RD4 variante B"
+    operations:
+      FILAGE:
+        group_by_defaut: "PAS_E_Fournisseur"
+        tags:
+          CR1:         {lti: 41.79, lts: 42.79, nominal: 42.29, unite: "mm"}
+          CR2:         {lti: 41.59, lts: 42.59, nominal: 42.09, unite: "mm"}
+          CR3:         {lti: 41.79, lts: 42.79, nominal: 42.29, unite: "mm"}
+          EP_BA:       {lti: 3.00,  lts: 3.60,  nominal: 3.30,  unite: "mm"}
+          EP_BF:       {lti: 1.75,  lts: 2.35,  nominal: 2.05,  unite: "mm"}
+          EP_CENTRALE: {lti: 3.12,  lts: 3.72,  nominal: 3.42,  unite: "mm"}
+          PAS_E:       {lti: null,  lts: null,   nominal: null,  unite: null}
+          PAS_I:       {lti: null,  lts: null,   nominal: null,  unite: null}
+      EQUATOR:
+        group_by_defaut: "Ref_Matrice"
+        tags:
+          CR10_INTRADOS_DESAXAGE: {lti: -1.00, lts: 1.00,  nominal: 0.0, unite: "mm"}
+          CR10_INTRADOS_FORME:    {lti: 0.00,  lts: 0.20,  nominal: 0.0, unite: "mm"}
+          CR10_INTRADOS_VRILLAGE: {lti: -0.33, lts: 0.33,  nominal: 0.0, unite: "mm"}
+          CR32_INTRADOS_DESAXAGE: {lti: -1.00, lts: 1.00,  nominal: 0.0, unite: "mm"}
+          CR32_INTRADOS_FORME:    {lti: 0.00,  lts: 0.20,  nominal: 0.0, unite: "mm"}
+          CR32_INTRADOS_VRILLAGE: {lti: -0.33, lts: 0.33,  nominal: 0.0, unite: "mm"}
+          CR50_INTRADOS_DESAXAGE: {lti: -1.00, lts: 1.00,  nominal: 0.0, unite: "mm"}
+          CR50_INTRADOS_FORME:    {lti: 0.00,  lts: 0.20,  nominal: 0.0, unite: "mm"}
+          CR50_INTRADOS_VRILLAGE: {lti: -0.33, lts: 0.33,  nominal: 0.0, unite: "mm"}
+          CR69_INTRADOS_DESAXAGE: {lti: -1.00, lts: 1.00,  nominal: 0.0, unite: "mm"}
+          CR69_INTRADOS_FORME:    {lti: 0.00,  lts: 0.20,  nominal: 0.0, unite: "mm"}
+          CR69_INTRADOS_VRILLAGE: {lti: -0.33, lts: 0.33,  nominal: 0.0, unite: "mm"}
+          CR90_INTRADOS_DESAXAGE: {lti: -1.00, lts: 1.00,  nominal: 0.0, unite: "mm"}
+          CR90_INTRADOS_FORME:    {lti: 0.00,  lts: 0.20,  nominal: 0.0, unite: "mm"}
+          CR90_INTRADOS_VRILLAGE: {lti: -0.33, lts: 0.33,  nominal: 0.0, unite: "mm"}
+          VEINE_SCAN_1_MAX:       {lti: -0.10, lts: 0.10,  nominal: 0.0, unite: "mm"}
+          VEINE_SCAN_1_MIN:       {lti: -0.10, lts: 0.10,  nominal: 0.0, unite: "mm"}
+          VEINE_SCAN_2_MAX:       {lti: -0.10, lts: 0.10,  nominal: 0.0, unite: "mm"}
+          VEINE_SCAN_2_MIN:       {lti: -0.10, lts: 0.10,  nominal: 0.0, unite: "mm"}
+          VEINE_SCAN_3_MAX:       {lti: 0.10,  lts: 0.60,  nominal: 0.0, unite: "mm"}
+          VEINE_SCAN_3_MIN:       {lti: 0.10,  lts: 0.60,  nominal: 0.0, unite: "mm"}
+          VEINE_SCAN_4_MAX:       {lti: 0.10,  lts: 0.60,  nominal: 0.0, unite: "mm"}
+          VEINE_SCAN_4_MIN:       {lti: 0.10,  lts: 0.60,  nominal: 0.0, unite: "mm"}
+          VEINE_SCAN_5_MAX:       {lti: -0.10, lts: 0.10,  nominal: 0.0, unite: "mm"}
+          VEINE_SCAN_5_MIN:       {lti: -0.10, lts: 0.10,  nominal: 0.0, unite: "mm"}
+
+# ============================================================
+# TEMPS — conventions temporelles et événements industriels
+# ============================================================
+
+temps:
+  conventions:
+    semaine:  "civile"      # lundi → dimanche
+    mois:     "calendaire"  # 1er → dernier jour du mois
+    trimestre: "calendaire"
+  evenements:
+    derniere_campagne:
+      description: "dernière campagne de production enregistrée"
+      jeton: "EVENT_LATEST_CAMPAIGN"
+      requete_sql: "SELECT start_time, end_time FROM production_campaigns ORDER BY id DESC LIMIT 1"
+    dernier_lot:
+      description: "dernier lot de production"
+      jeton: "EVENT_LATEST_LOT"
+      requete_sql: "SELECT date_debut, date_fin FROM lots ORDER BY id DESC LIMIT 1"
+
+# ============================================================
+# CONTRAT RAPPORT — exigences qualité du rapport final
+# ============================================================
+
+contrat_rapport:
+  doit_contenir:
+    - "Verdict GO / NO-GO explicite en première page"
+    - "Cpk avec interprétation en langage métier"
+    - "Graphique avec limites de tolérance LTI et LTS visibles"
+    - "Recommandation actionnable avec délai précis"
+    - "Unité de mesure sur tous les axes de graphique"
+  ne_doit_jamais:
+    - "Afficher p-value à un profil opérateur"
+    - "Conclure aucune action si Cpk < 1.33"
+    - "Afficher un axe de graphique sans unité"
+    - "Donner un coût sans préciser les hypothèses"
+  format_par_priorite:
+    P1: {max_pages: 1,  titre: "Action immédiate requise"}
+    P2: {max_pages: 3,  titre: "Intervention urgente"}
+    P3: {max_pages: 10, titre: "Surveillance recommandée"}
+    P4: {max_pages: 10, titre: "Rapport d'analyse"}
+
+# ============================================================
+# PROFILS UTILISATEURS
+# ============================================================
+
+profils:
+  operateur:
+    tokens_max: 150
+    vocabulaire_simple: true
+    forbidden_words:
+      - "z-score"
+      - "p-value"
+      - "Cpk"
+      - "sigma"
+      - "ANOVA"
+      - "Kruskal"
+      - "Mann-Kendall"
+  technicien:
+    tokens_max: 250
+    vocabulaire_simple: false
+    forbidden_words: []
+  ingenieur:
+    tokens_max: 350
+    vocabulaire_simple: false
+    forbidden_words: []
+  directeur:
+    tokens_max: 200
+    vocabulaire_simple: true
+    forbidden_words:
+      - "z-score"
+      - "ANOVA"
+      - "EWMA"
+      - "CUSUM"
+      - "p-value"
+
+# ============================================================
+# FINANCIER
+# ============================================================
+
+financier:
+  cout_horaire_presse:  500
+  cout_horaire_four:    300
+  cout_rebut_piece:     45
+  devise: "EUR"
+
+# ============================================================
+# RAG — documents techniques à indexer
+# ============================================================
+
+rag:
+  actif: true
+  dossier: "data/manuals/lisi/"
+  collection_chroma: "lisi_aerospace"
+  documents: []  # à remplir avec les manuels du client
+
+# ============================================================
+# FEW SHOT — exemples par type d'analyse
+# ============================================================
+
+few_shot:
+  dossier: "data/few_shot/lisi/"
+  fichiers:
+    conformite:           "conformite.yaml"
+    comparaison_groupes:  "comparaison.yaml"
+    tendance:             "tendance.yaml"
+    anomalie:             "anomalie.yaml"

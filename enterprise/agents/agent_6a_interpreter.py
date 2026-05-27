@@ -438,8 +438,8 @@ RÈGLES ABSOLUES :
         cleaned = re.sub(r"^#{1,6}\s*", "", cleaned, flags=re.MULTILINE)
         return re.sub(r"\s+", " ", cleaned).strip()
 
-    def _allowed_numbers(self, metrics_compact: dict) -> set[float]:
-        """Collect numeric values allowed in the generated text."""
+    def _collect_numeric_allowed(self, *roots: Any) -> set[float]:
+        """Extrait récursivement tous les nombres autorisés (±0.5)."""
         allowed: set[float] = set()
 
         def register(number: float) -> None:
@@ -463,7 +463,16 @@ RÈGLES ABSOLUES :
                 for nested in value:
                     walk(nested)
 
-        walk(metrics_compact)
+        for root in roots:
+            walk(root)
+            if isinstance(root, dict):
+                for text in (root.get("target_column"), root.get("question")):
+                    if isinstance(text, str):
+                        for token in re.findall(r"\d+", text):
+                            register(float(token))
+                for bucket in ("specialist_results", "validated_results"):
+                    walk(root.get(bucket))
+                walk(root.get("intention"))
         return allowed
 
     def _number_whitelist_from_column(self, target_column: str) -> set[float]:
@@ -490,6 +499,8 @@ RÈGLES ABSOLUES :
         metrics_compact: dict,
         user_profile: str,
         target_column: str,
+        state: dict | None = None,
+        payload: dict | None = None,
     ) -> dict:
         """
         Validate interpretation text (flexible form, strict numeric content).
@@ -513,22 +524,29 @@ RÈGLES ABSOLUES :
             if word.lower() in lowered:
                 return {"valid": False, "error": f"mot interdit: {word}"}
 
-        allowed_numbers = self._allowed_numbers(metrics_compact)
+        allowed_numbers = self._collect_numeric_allowed(
+            metrics_compact,
+            payload or {},
+            state or {},
+        )
         number_whitelist = self._number_whitelist_from_column(target_column)
-        text_for_numbers = re.sub(r"\bP\s*[1-4]\b", "", normalized, flags=re.IGNORECASE)
-
-        for match in _NUMBER_TOKEN_RE.findall(text_for_numbers):
-            normalized_number = match.replace(",", ".")
-            try:
-                number = float(normalized_number)
-            except ValueError:
-                continue
-            if not self._number_is_allowed(
-                number,
-                allowed_numbers,
-                number_whitelist,
-            ):
-                return {"valid": False, "error": f"chiffre inventé: {match}"}
+        combined = allowed_numbers | number_whitelist
+        if combined:
+            text_for_numbers = re.sub(
+                r"\bP\s*[1-4]\b", "", normalized, flags=re.IGNORECASE
+            )
+            for match in _NUMBER_TOKEN_RE.findall(text_for_numbers):
+                normalized_number = match.replace(",", ".")
+                try:
+                    number = float(normalized_number)
+                except ValueError:
+                    continue
+                if not self._number_is_allowed(
+                    number,
+                    allowed_numbers,
+                    number_whitelist,
+                ):
+                    return {"valid": False, "error": f"chiffre inventé: {match}"}
 
         return {"valid": True}
 
@@ -661,6 +679,8 @@ RÈGLES ABSOLUES :
                     metrics,
                     user_profile,
                     target_column,
+                    state,
+                    payload,
                 )
                 if validation["valid"]:
                     texte_final = self._normalize_text(raw_text)

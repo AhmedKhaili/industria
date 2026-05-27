@@ -165,6 +165,27 @@ class CpCpkSpecialist(BaseSpecialist):
             "conforme_EN9100": bool(Cpk >= 1.33),
         }
 
+    @staticmethod
+    def _enrich_result(payload: dict) -> dict:
+        """Alias métier + clés attendues par les agents rapport (cpk minuscule)."""
+        out = dict(payload)
+        cpk = payload.get("Cpk")
+        cp = payload.get("Cp")
+        out["cpk"] = cpk
+        out["cp"] = cp
+        out["mean"] = payload.get("mean")
+        out["std"] = payload.get("std")
+        out["lsl"] = payload.get("LSL")
+        out["usl"] = payload.get("USL")
+        out["n"] = payload.get("n")
+        hors = payload.get("hors_limites_pct")
+        if hors is not None:
+            try:
+                out["within_spec_pct"] = round(100.0 - float(hors), 3)
+            except (TypeError, ValueError):
+                out["within_spec_pct"] = None
+        return out
+
     def run(
         self,
         df: pd.DataFrame,
@@ -176,7 +197,13 @@ class CpCpkSpecialist(BaseSpecialist):
         """
         self._current_params = dict(params or {})
         try:
-            return super().run(df, state, params)
+            result = super().run(df, state, params)
+            if (
+                result.get("status") == "success"
+                and isinstance(result.get("result"), dict)
+            ):
+                result["result"] = self._enrich_result(result["result"])
+            return result
         finally:
             self._current_params = {}
 

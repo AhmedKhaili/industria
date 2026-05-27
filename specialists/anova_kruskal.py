@@ -226,6 +226,20 @@ class AnovaKruskalSpecialist(BaseSpecialist):
             "levene_p": round(float(levene_p), 4) if levene_p is not None else None,
         }
 
+    @staticmethod
+    def _enrich_result(payload: dict) -> dict:
+        """Clés normalisées pour lecture agent / PDF."""
+        out = dict(payload)
+        methode = str(payload.get("methode_choisie", ""))
+        out["method"] = "kruskal" if "kruskal" in methode.lower() else "anova"
+        out["statistic"] = payload.get("test_stat")
+        out["p_value"] = payload.get("p_value")
+        out["significant"] = payload.get("significatif")
+        out["n_groups"] = payload.get("n_groupes")
+        out["group_col"] = payload.get("colonne_groupe")
+        out["groups_summary"] = payload.get("stats_par_groupe")
+        return out
+
     def run(
         self,
         df: pd.DataFrame,
@@ -242,7 +256,13 @@ class AnovaKruskalSpecialist(BaseSpecialist):
             self._current_params["group_column"] = self._current_state["group_column"]
 
         try:
-            return super().run(df, state, self._current_params)
+            result = super().run(df, state, self._current_params)
+            if (
+                result.get("status") == "success"
+                and isinstance(result.get("result"), dict)
+            ):
+                result["result"] = self._enrich_result(result["result"])
+            return result
         finally:
             self._current_params = {}
             self._current_state = {}

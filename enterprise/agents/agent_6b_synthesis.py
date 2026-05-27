@@ -415,8 +415,12 @@ RÈGLES ABSOLUES :
         cleaned = re.sub(r"^#{1,6}\s*", "", cleaned, flags=re.MULTILINE)
         return re.sub(r"\s+", " ", cleaned).strip()
 
-    def _allowed_numbers(self, json_compact: dict) -> set[float]:
-        """Collect numeric values permitted in generated text."""
+    def _collect_numeric_allowed(
+        self,
+        json_compact: dict,
+        state: dict | None = None,
+    ) -> set[float]:
+        """Extrait tous les nombres autorisés depuis compact + state."""
         allowed: set[float] = set()
 
         def register(number: float) -> None:
@@ -435,23 +439,28 @@ RÈGLES ABSOLUES :
             if isinstance(value, dict):
                 for nested in value.values():
                     walk(nested)
+                return
+            if isinstance(value, list):
+                for nested in value:
+                    walk(nested)
 
         walk(json_compact)
+        if isinstance(state, dict):
+            for bucket in ("specialist_results", "validated_results"):
+                walk(state.get(bucket))
+            walk(state.get("intention"))
+            for text in (state.get("target_column"), state.get("question")):
+                if isinstance(text, str):
+                    for token in re.findall(r"\d+", text):
+                        register(float(token))
         return allowed
 
     def _number_whitelist(
         self,
         json_compact: dict,
+        state: dict | None = None,
     ) -> set[float]:
-        """
-        Build extra allowed numbers: target digits, priority level, standard delay.
-
-        Args:
-            json_compact: Compact JSON sent to the LLM.
-
-        Returns:
-            set[float]: Whitelisted numbers.
-        """
+        """Chiffres autorisés : cible, priorité, délais standard."""
         whitelist: set[float] = set()
 
         target = json_compact.get("target", json_compact.get("target_column", ""))
@@ -467,6 +476,13 @@ RÈGLES ABSOLUES :
             delai = PRIORITY_DELAI_MINUTES.get(priority.upper())
             if delai is not None:
                 whitelist.add(delai)
+
+        if isinstance(state, dict):
+            sp = state.get("priority")
+            if isinstance(sp, str):
+                m = re.match(r"P(\d)", sp.upper())
+                if m:
+                    whitelist.add(float(m.group(1)))
 
         return whitelist
 
@@ -486,6 +502,7 @@ RÈGLES ABSOLUES :
         text: str,
         json_compact: dict,
         user_profile: str,
+        state: dict | None = None,
     ) -> dict:
         """
         Validate synthesis text (flexible form, strict numeric content).
@@ -508,24 +525,27 @@ RÈGLES ABSOLUES :
             if word.lower() in lowered:
                 return {"valid": False, "error": f"mot interdit: {word}"}
 
-        allowed_numbers = self._allowed_numbers(json_compact)
-        number_whitelist = self._number_whitelist(json_compact)
+        allowed_numbers = self._collect_numeric_allowed(json_compact, state)
+        number_whitelist = self._number_whitelist(json_compact, state)
         if profile == "directeur":
             number_whitelist.add(100.0)
-        text_for_numbers = re.sub(r"\bP\s*[1-4]\b", "", normalized, flags=re.IGNORECASE)
-
-        for match in _NUMBER_TOKEN_RE.findall(text_for_numbers):
-            normalized_number = match.replace(",", ".")
-            try:
-                number = float(normalized_number)
-            except ValueError:
-                continue
-            if not self._number_is_allowed(
-                number,
-                allowed_numbers,
-                number_whitelist,
-            ):
-                return {"valid": False, "error": f"chiffre inventé: {match}"}
+        combined = allowed_numbers | number_whitelist
+        if combined:
+            text_for_numbers = re.sub(
+                r"\bP\s*[1-4]\b", "", normalized, flags=re.IGNORECASE
+            )
+            for match in _NUMBER_TOKEN_RE.findall(text_for_numbers):
+                normalized_number = match.replace(",", ".")
+                try:
+                    number = float(normalized_number)
+                except ValueError:
+                    continue
+                if not self._number_is_allowed(
+                    number,
+                    allowed_numbers,
+                    number_whitelist,
+                ):
+                    return {"valid": False, "error": f"chiffre inventé: {match}"}
 
         return {"valid": True}
 
@@ -604,6 +624,7 @@ RÈGLES ABSOLUES :
                     raw_text,
                     json_compact,
                     user_profile,
+                    state,
                 )
                 if validation["valid"]:
                     texte_final = self._normalize_text(raw_text)

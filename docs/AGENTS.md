@@ -1,781 +1,791 @@
-# AGENTS.md — IndustrIA Architecture v2.1
-# Source de vérité absolue — issu de validation 4 LLMs
+# AGENTS.md — Référence historique v3.0
+
+> ⚠️ Ce fichier décrit l'architecture v3.0.
+> Les assets réutilisables (specialists/, enterprise/report/,
+> enterprise/rag/) restent valides.
+> Pour l'architecture cible v4.0 → voir docs/VISION.md
+> Pour la spec de chaque système → voir docs/S1.md, docs/S2.md, etc.
+> La numérotation "Agent 1, Agent 2..." ci-dessous
+> correspond à la v3.0. Dans systems/s1/, les agents
+> portent des noms explicites (agent_1_preprocessor, etc.)
+> et n'ont AUCUN lien avec les numéros v3.0.
+
+# IndustrIA — AGENTS.md
+# Architecture complète v3.0
+# Référence technique v3.0
 
 ---
 
 ## PRINCIPE FONDAMENTAL (non négociable)
 
 LLM = parser sémantique JSON uniquement
-Code analytique = Python dur-codé TOUJOURS
-LLM ne calcule jamais
-LLM ne choisit jamais une méthode statistique
-LLM n'exécute jamais de code
+Python = tous les calculs
+LLM ne calcule JAMAIS
+LLM ne choisit JAMAIS une méthode statistique
+LLM n'exécute JAMAIS de code
+Jamais de données brutes au LLM
 
 ---
 
 ## PIPELINE COMPLET
 
-```
-QUESTION UTILISATEUR
-        ↓
+COUCHE 0 — DONNÉES & CONFIGURATION
+
+data/
+├── config.py
+│   → MACHINE_CONFIG (coûts horaires, unités, seuils LSL/USL)
+│   → GOLDEN_BATCH_IDS
+│   → FINANCIAL_PARAMS (cout_horaire_defaut=500)
+├── manuals/
+│   → PDFs manuels de maintenance
+│   → fiches techniques capteurs
+│   → procédures EN9100
+└── schemas/
+    → migrations TimescaleDB
+
+core/database/
+→ TimescaleDB connexion
+→ postgres_readonly user (sandbox SQL)
+→ hypertables capteurs
+→ tables : analyses_history, alerts, acquittements
+→ OLLAMA_KEEP_ALIVE=-1
+
+LICENCES :
+→ core/ Apache 2.0 (open source)
+→ enterprise/ BSL 1.1 (commercial)
+
+---
+
+COUCHE 1 — PIPELINE QUESTION/RÉPONSE
+
+QUESTION UTILISATEUR (langage naturel)
+            ↓
 AGENT 1 — Analyste Sémantique
-        ↓
+  Modèle : qwen2.5-coder:7b
+  → comprend la question
+  → identifie tables + colonnes
+  → extrait filtres temporels
+  → JSON : tables, columns, target_column, filters
+  → keyword matching tables pertinentes
+  → pgvector en Sprint 6
+            ↓
 AGENT 2 — SQL Engine
-        ↓
+  Modèle : qwen2.5-coder:7b
+  → génère SQL depuis JSON
+  → validation sqlglot
+  → sandbox postgres_readonly
+  → LIMIT 100 forcé
+  → timeout SQL 1000ms max
+  → blocage : UNION, UNION ALL, FULL OUTER JOIN,
+              DROP, INSERT, DELETE
+  → post-traitement TIME_BUCKET('hour' → time_bucket('1 hour'
+  → fallback SELECT * si 3 échecs
+  → si target_column absente du df_raw →
+    recalage sur première colonne numérique
+            ↓
 AGENT 3 — Nettoyeur (Python pur)
-        ↓
-AGENT 4a — Méthodologue (intention JSON)
-        ↓
+  → filtre médian (window=3)
+  → MAD z-score robuste (window=20)
+  → détection plateaux
+  → règles physiques (limites génériques ±1e6)
+  → classification :
+    normal / bruit_capteur / anomalie_process / capteur_bloqué
+  → supprime colonnes booléennes
+  → df_propre + df_anomalies
+            ↓
+AGENT 4a — Méthodologue (qwen2.5-coder:7b)
+  → classifie intention en 8 goals :
+    detection_anomalies, comparaison_groupes,
+    correlation, capabilite, tendance,
+    cross_process, simulation, resume
+  → JSON : goal, target_col, group_col, time_aware
+  → fallback "resume" si échec
+            ↓
 AGENT 4b — Dispatcher (Python pur)
-        ↓
-SPÉCIALISTES (Python pur, asyncio parallèle)
-        ↓
+  → mapping goal → spécialistes (dur-codé) :
+    detection_anomalies → zscore, ewma_cusum, spc
+    comparaison_groupes → anova_kruskal, pivot
+    correlation         → correlation, fourier(si time_aware)
+    capabilite          → cp_cpk, spc, pivot
+    tendance            → mann_kendall, ewma_cusum, regression
+    cross_process       → correlation, zscore, pivot
+    simulation          → regression, pivot
+    resume              → zscore, cp_cpk, spc, pivot
+  → pre-gate :
+    df < 5          → bloque tout
+    df < 30         → retire cp_cpk ET anova_kruskal
+    colonnes < 2    → retire correlation
+    1 seul groupe   → retire anova_kruskal
+  → asyncio.gather() parallèle (asyncio.to_thread)
+            ↓
+11 AGENTS SPÉCIALISTES (Python pur)
+  ZScoreSpecialist    → anomalies MAD z-score
+  CpCpkSpecialist     → capabilité EN9100
+  CorrelationSpecialist → liens variables
+  AnovaKruskalSpecialist → comparaison groupes
+  EwmaCusumSpecialist → dérives progressives
+  SpcSpecialist       → cartes Shewhart
+  RegressionSpecialist → influence variables
+  PivotSpecialist     → agrégations
+  FourierSpecialist   → périodicités FFT
+  MannKendallSpecialist → tendances non-param.
+  (+ matrix_profile en Sprint 6)
+            ↓
 STATISTICIAN JUDGE (Python pur)
-        ↓
-AGENT 5 — OAPC (priorité, prescrire, certifier — Python pur)
-        ↓
-AGENT 6a — Interprète générique (LLM × N, 1 par spécialiste)
-        ↓
-AGENT 6b — Synthèse globale (LLM × 1)
-        ↓
-AGENT 6c — Constructeur PDF (Python pur — ReportLab + Plotly)
-        ↓
-STREAMLIT + monitoring planifié (Sprint 5)
-```
+  → 6 règles validation statistique :
+    1. ANOVA non normal → invalide
+    2. Cpk non normal → warning
+    3. n<30 → invalide ML lourd
+    4. Contradictions zscore/spc :
+       ZScore anomalie > 0 ET SPC sous_controle = True → contradiction
+       ZScore anomalie > 0 ET SPC sous_controle = False → cohérent ✅
+    5. Corrélation sur peu de points → warning
+    6. Régression singulière → warning
+  → judge_valid par résultat
+            ↓
+    ┌──────────────┴──────────────┐
+    ↓                              ↓
+MODE CHAT (< 30 sec)        MODE RAPPORT (15-20 min)
 
 ---
 
-## AGENT 1 — Analyste Sémantique
+COUCHE 2A — MODE CHAT (réponse rapide)
 
-| Champ | Valeur |
-|-------|--------|
-| Fichier | enterprise/agents/agent_1_analyst.py |
-| Modèle | qwen2.5-coder:7b |
-| num_ctx | 8000 |
-| num_predict | 150 |
-| temperature | 0.1 |
-| LLM | OUI — extraction JSON uniquement |
+AGENT 5 — Interpréteur OAPC
+  Modèle : qwen2.5-coder:14b
+  temperature=0.1, num_ctx=4096
 
-REÇOIT :
-  question: str
-  schema_catalog: dict (via pgvector similarity)
+  Python calcule :
+  → priorité P1/P2/P3/P4 (règles déterministes)
+    P1 : Cpk < 0.67 ou anomalies > 20%
+    P2 : anomalies > 10% ou dérive significative
+    P3 : anomalies > 5%
+    P4 : dérive Mann-Kendall p < 0.05
+  → PRESCRIRE (table de règles métier par goal+priorité)
+  → CERTIFIER (template fixe + hash SHA-256)
+    "IndustrIA v2.1 | cible | priorité | hash[:16] | timestamp"
 
-FAIT :
-  1. Requête pgvector dans TimescaleDB
-     → récupère 2-3 tables les plus proches
-     → cosine similarity sur descriptions
-  2. Envoie au LLM : question + schéma réduit
-  3. LLM retourne JSON :
-     {
-       "relevant_tables": ["formage_data"],
-       "relevant_columns": ["four_3", "timestamp"],
-       "filters": {"time_filter_hours": 72}
-     }
-  4. Validation Python (0 LLM) :
-     → vérifie que colonnes existent en base
-     → 3 tentatives max si hallucination
-  5. Inscrit dans LangGraph State :
-     state["target_column"] = "four_3"
-     state["tables"] = ["formage_data"]
+  LLM génère UNIQUEMENT :
+  → OBSERVER (faits en français)
+  → ANALYSER (contexte + méthode)
 
-RETOURNE :
-  {
-    "tables": [...],
-    "columns": [...],
-    "filters": {...},
-    "target_column": "...",
-    "confidence": 0.95,
-    "attempts": 1,
-    "error": null
-  }
+  JSON compact envoyé au LLM (max 7 clés) :
+  → goal, target_column, anomalies_count,
+    pourcentage_anomalies, max_zscore,
+    derive_detectee, n
 
-FALLBACK :
-  3 échecs → prompt simplifié → 3 échecs
-  → stop + demande clarification utilisateur
+  Profils + budgets tokens :
+  → operateur  : 150 tokens, temp=0.1
+    mots interdits : z-score, zscore, écart-type,
+    variance, p-value, shapiro, anova, médiane,
+    percentile, sigma, UCL, LCL, Cpk, EWMA, CUSUM
+  → technicien : 250 tokens, temp=0.2
+    mots interdits : (aucun)
+  → ingenieur  : 350 tokens, temp=0.3
+    mots interdits : (aucun)
+  → directeur  : 200 tokens, temp=0.2
+    mots interdits : z-score, zscore, UCL, LCL,
+    Shapiro, ANOVA, p-value, EWMA, CUSUM
 
----
+  Validation post-LLM Python :
+  → 4 sections OAPC présentes (souple sur forme)
+  → aucun chiffre inventé (tous profils, ±0.5)
+    whitelist : chiffres dans target_column
+  → mots interdits selon profil
+  → fallback template après 3 échecs
+  → JAMAIS de crash visible utilisateur
 
-## AGENT 2 — SQL Engine
-
-| Champ | Valeur |
-|-------|--------|
-| Fichier | enterprise/agents/agent_2_sql.py |
-| Modèle | qwen2.5-coder:7b |
-| num_ctx | 4000 |
-| num_predict | 300 |
-| temperature | 0.0 |
-| LLM | OUI — génération SQL uniquement |
-
-REÇOIT :
-  state["tables"], state["columns"],
-  state["filters"], state["target_column"]
-
-FAIT :
-  1. LLM génère requête SQL TimescaleDB
-  2. Validation sqlglot :
-     → bloque INSERT/UPDATE/DELETE/
-       DROP/ALTER/CREATE/TRUNCATE
-  3. Nettoyage markdown (```sql```)
-  4. Injection LIMIT 100 si absent
-  5. Exécution sur user PostgreSQL READ-ONLY
-     timeout 2000ms strict
-  6. Retourne DataFrame pandas
-
-RETOURNE :
-  {
-    "df": DataFrame,
-    "sql": "SELECT ...",
-    "row_count": 526,
-    "execution_time_ms": 45,
-    "error": null
-  }
-
-SÉCURITÉ ABSOLUE :
-  Utilisateur PostgreSQL dédié read-only
-  Timeout session 2000ms
-  LIMIT 100 forcé par code Python
-  sqlglot AST parser (pas regex)
+  Réponse chat → persistance TimescaleDB
 
 ---
 
-## AGENT 3 — Nettoyeur
+COUCHE 2B — MODE RAPPORT PDF PREMIUM
 
-| Champ | Valeur |
-|-------|--------|
-| Fichier | enterprise/agents/agent_3_cleaner.py |
-| Modèle | AUCUN (Python pur, 0ms overhead LLM) |
-| LLM | NON |
+FONDATION COMMUNE (importée par tous les agents rapport) :
 
-REÇOIT :
-  state["df"] : DataFrame brut
-  state["target_column"] : colonne cible
+enterprise/report/styles.py (à créer)
+  → tous les styles ReportLab
+  → couleurs industrielles :
+    P1=#DC2626, P2=#EA580C, P3=#CA8A04, P4=#16A34A
+    header=#1E3A5F, light_blue=#EBF4FF
+  → templates tableaux
+  → polices, tailles, marges
 
-ALGORITHMES (dans l'ordre) :
+enterprise/report/charts.py (à créer)
+  → thème Plotly industriel cohérent
+  → build_timeseries(df, target, anomalies)
+    ±2σ vert transparent, ±3σ rouge transparent
+    anomalies en croix rouges
+    axe Y : f"{target} (unité)"
+  → build_gauge(value, title, min, max, seuils)
+  → build_heatmap(corr_matrix)
+  → build_waterfall(categories, values)
+  → build_bar_horizontal(causes, scores)
+  → build_boxplot(df, groups)
+  → export PNG 1200×400px via kaleido
 
-  1. FILTRE MÉDIAN (spikes isolés)
-     fenêtre = 3 ou 5 points
-     → élimine pics haute fréquence
-
-  2. MAD Z-SCORE ROBUSTE
-     MAD = médiane(|x_t - médiane_glissante|)
-     z_t = 0.6745 × (x_t - médiane) / MAD
-     seuil = 3.5
-
-     1 point isolé |z| > 3.5
-       → BRUIT CAPTEUR
-       → remplacé par médiane locale dans df_propre
-
-     ≥ 5 points consécutifs |z| > 3.5
-       → ANOMALIE PROCESS
-       → conservé dans df_anomalies_conservees
-         avec colonne type_anomalie="process"
-
-  3. DÉTECTION PLATEAUX
-     même valeur décimale > 5 minutes
-     → type_anomalie="capteur_bloque"
-     → conservé dans df_anomalies_conservees
-
-  4. RÈGLES PHYSIQUES
-     température < -50°C ou > 250°C → bruit
-     débit négatif → bruit
-     valeur = NaN → bruit
-
-RETOURNE :
-  {
-    "df_propre": DataFrame,
-    "df_anomalies_conservees": DataFrame,
-    "stats": {
-      "total_points": 526,
-      "bruit_capteur_count": 3,
-      "anomalie_process_count": 12,
-      "capteur_bloque_count": 0
-    },
-    "error": null
-  }
-
-RÈGLE D'OR : jamais supprimer → toujours annoter
+enterprise/report/formatters.py (à créer)
+  → format_value(v) → jamais None → "N/A"
+  → format_dict(d) → jamais dict brut
+    {direction: "hausse", slope: 0.1} → "hausse (pente=0.10)"
+  → format_list(l) → "3 éléments" pas la liste
+  → format_number(n, decimals=2, unit="") → "4.70 A"
+  → format_timestamp(ts) → "18/05/2026 22:44:49"
+  → format_bool(b) → "Oui"/"Non"
 
 ---
 
-## AGENT 4a — Méthodologue (intention)
+AGENTS CALCUL PYTHON PUR (à créer) :
 
-| Champ | Valeur |
-|-------|--------|
-| Fichier | enterprise/agents/agent_4a_methodologist.py |
-| Modèle | qwen2.5-coder:7b |
-| num_ctx | 2000 |
-| num_predict | 150 |
-| temperature | 0.1 |
-| LLM | OUI — intention JSON uniquement |
+agent_kpis.py
+  → requêtes TimescaleDB Python pur
+  → OEE/TRS = Disponibilité × Performance × Qualité
+  → MTBF = temps_total / nb_pannes
+  → MTTR = temps_cumul_reparation / nb_interventions
+  → First Pass Yield = pièces_conformes / total
+  → Scrap Rate = pièces_rejetées / total
+  → jauges Plotly (go.Indicator)
+  → JAMAIS via LLM
 
-REÇOIT :
-  question: str
-  df_propre.columns: list
+agent_tendance.py
+  → Mann-Kendall sur 30 derniers jours (pymannkendall)
+  → comparaison semaine précédente
+  → test Mann-Whitney (p < 0.05 → significatif)
+  → évolution % des indicateurs
+  → graphique tendance + droite de Sen (Plotly)
+  → JAMAIS via LLM
 
-LLM RETOURNE UNIQUEMENT :
-  {
-    "goal": "detection_anomalies" |
-            "comparaison_groupes" |
-            "correlation" |
-            "capabilite" |
-            "tendance" |
-            "cross_process" |
-            "simulation" |
-            "resume",
-    "target_col": "four_3",
-    "group_col": "modele" | null,
-    "time_aware": true | false
-  }
+agent_heatmap.py
+  → matrice corrélations Pearson/Spearman
+  → entre tous les capteurs disponibles
+  → heatmap Plotly gradient rouge/bleu
+  → JAMAIS via LLM
 
----
+agent_financier.py
+  → coût horaire depuis data/config.py
+  → durée avant panne = (seuil - valeur) / pente_derive
+  → coût rebuts = nb_pieces_defaut × cout_rebut_piece
+  → économie = coût_évité - coût_intervention
+  → waterfall chart Plotly
+  → JAMAIS via LLM
 
-## AGENT 4b — Dispatcher
+agent_causes.py
+  → scores normalisés /100 (indépendants)
+  → max 5 causes triées par score décroissant
+  → règles Python pur :
+    ZScore anomalie_process > 0 → "Anomalie process"
+    ZScore bruit > 0 → "Bruit capteur"
+    SPC sous_controle=False → "Hors contrôle SPC" score=75
+    EWMA derive=True → "Dérive EWMA/CUSUM" score=70
+    CpCpk Cpk < 1.33 → "Capabilité insuffisante" score=80
+    Regression r2 > 0.5 → "Corrélation avec {var}" score=r2*100
+  → barres horizontales Plotly
+  → NOTE obligatoire : "Scores indépendants par méthode.
+    Ne se somment pas."
 
-| Champ | Valeur |
-|-------|--------|
-| Fichier | enterprise/agents/agent_4b_dispatcher.py |
-| Modèle | AUCUN (Python pur) |
-| LLM | NON |
-
-REÇOIT :
-  state["intention"] : JSON de 4a
-  state["df_propre"] : DataFrame
-
-PRE-GATE (bloque si) :
-  df.shape[0] < 5  → bloque ML lourd
-  df.shape[0] < 30 → bloque ANOVA/PCA
-  colonnes = 1     → bloque corrélation
-
-ARBRE DE DÉCISION :
-
-  goal=detection_anomalies
-    → zscore + isolation_forest +
-      changepoint + ewma_cusum
-
-  goal=comparaison_groupes
-    → Shapiro-Wilk sur résidus
-    → p < 0.05 : kruskal_wallis
-    → p ≥ 0.05 : Levene
-      → variances égales : anova
-      → inégales : anova_welch
-
-  goal=correlation
-    → pearson + spearman + mutual_info
-    → si time_aware : + fourier
-
-  goal=capabilite
-    → cp_cpk + spc + distribution
-
-  goal=tendance
-    → mann_kendall + ewma_cusum
-
-  goal=cross_process
-    → lag_correlation + jointure temporelle
-
-  goal=simulation
-    → regression
-
-  goal=resume
-    → zscore + cp_cpk + spc + pivot
-
-LANCE :
-  results = await asyncio.gather(*tasks,
-              return_exceptions=True)
+enterprise/rag/context_agent.py (à créer)
+  → ChromaDB local
+  → embeddings depuis data/manuals/ PDFs
+  → similarité cosinus Python pur
+  → extrait page exacte du manuel de maintenance
+  → retourne : {fichier, page, texte_extrait}
+  → JAMAIS le LLM ne cherche dans les docs
 
 ---
 
-## AGENTS SPÉCIALISTES MVP
+AGENTS LLM RAPPORT (texte uniquement) :
 
-Tous Python pur, 0 LLM.
-Tous reçoivent : df + state["target_column"]
-Tous retournent :
-{
-  "agent": "nom",
-  "status": "success"|"error",
-  "result": {...},
-  "execution_time_ms": int
-}
+agent_6a_interpreter.py (existant)
+  Modèle : qwen2.5-coder:14b
+  → appelé N fois (1 par spécialiste)
+  → JSON compact 3-4 clés max par spécialiste :
+    ZScore → anomalies_count, max_zscore,
+              pourcentage_anomalies, anomalie_process_count
+    SPC    → sous_controle, hors_limites_x_count, UCL_x, LCL_x
+    EWMA   → derive_detectee, tendance_direction, ewma_alertes_count
+    CpCpk  → Cpk, Cp, conforme_EN9100
+    Corr   → n_correlations_sig, correlation_max
+    Regr   → meilleure_variable, r_squared
+    MK     → tendance, p_value, sen_slope
+    ANOVA  → methode_choisie, significatif, interpretation
+    Pivot  → global_mean, global_std
+    Fourier → signal_periodique, frequence_dominante
+  → 1-3 phrases par profil
+  → validation post-LLM (chiffres, mots interdits)
+  → fallback template après 3 échecs
 
-| Agent | Fichier | Librairie |
-|-------|---------|-----------|
-| zscore | specialists/zscore.py | scipy + numpy |
-| isolation_forest | specialists/isolation_forest.py | sklearn |
-| correlation | specialists/correlation.py | scipy + pandas |
-| cp_cpk | specialists/cp_cpk.py | code maison |
-| anova_kruskal | specialists/anova_kruskal.py | scipy.stats |
-| ewma_cusum | specialists/ewma_cusum.py | code maison |
-| spc | specialists/spc.py | code maison |
-| regression | specialists/regression.py | statsmodels |
-| spectral | specialists/spectral.py | scipy.fft |
-| pivot | specialists/pivot.py | pandas |
-| mann_kendall | specialists/mann_kendall.py | pymannkendall |
-| pca | specialists/pca.py | sklearn |
-| fourier | specialists/fourier.py | scipy.fft |
-| changepoint | specialists/changepoint.py | ruptures |
+agent_6b_synthesis.py (existant)
+  Modèle : qwen2.5-coder:14b
+  → appelé UNE SEULE FOIS après tous les 6a
+  → JSON compact 4 clés max :
+    {priority, goal, target_column, n_specialistes}
+  → JAMAIS les textes bruts des 6a en entrée
+  → résumé exécutif 3-5 phrases adapté profil
+  → validation post-LLM
+  → fallback template après 3 échecs
 
----
+agent_6b_tendance.py (à créer)
+  Modèle : qwen2.5-coder:14b
+  → appelé si tendance disponible
+  → JSON 3 clés : {tendance_direction, p_value, comparaison_semaine}
+  → 1 phrase de synthèse tendance
+  → optionnel si agent_tendance a tourné
 
-## STATISTICIAN JUDGE
-
-| Champ | Valeur |
-|-------|--------|
-| Fichier | enterprise/agents/statistician_judge.py |
-| Modèle | AUCUN (Python pur) |
-| Position | APRÈS les spécialistes |
-| LLM | NON |
-
-RÈGLES DE VALIDATION :
-  données non-normales + ANOVA
-    → invalide + warning + suggère Kruskal
-
-  n < 30 + modèle ML lourd
-    → invalide + warning "données insuffisantes"
-
-  série non-stationnaire + ARIMA direct
-    → invalide + force différenciation
-
-  corrélation sur 2 variables identiques
-    → invalide + warning "tautologie"
-
-RETOURNE :
-  résultats filtrés + warnings méthodologiques
-  → Agents 5 et 6a utilisent UNIQUEMENT résultats valides
+agent_6b_reco.py (à créer)
+  Modèle : qwen2.5-coder:14b
+  → reformulation recommandation RAG
+  → JSON 4 clés : {action, delai, manuel, page}
+  → cite explicitement fichier + page
+  → JAMAIS inventer une procédure absente du RAG
+  → Si RAG vide → "Aucune procédure locale trouvée.
+    Contacter l'ingénieur procédé."
 
 ---
 
-## AGENT 5 — Interpréteur OAPC
+ASSEMBLEUR PDF : agent_6c_pdf.py (à refaire)
+  100% Python pur — AUCUN appel LLM
+  Utilise styles.py, charts.py, formatters.py
 
-| Champ | Valeur |
-|-------|--------|
-| Fichier | enterprise/agents/agent_5_interpreter.py |
-| Modèle | qwen2.5-coder:14b |
-| num_ctx | 4096 |
-| LLM | OUI — OBSERVER et ANALYSER uniquement |
+  12 SECTIONS :
 
-### Structure OAPC
+  S1  — Page de garde
+        → Logo "IndustrIA" 28pt
+        → Titre "Rapport d'Analyse Industrielle"
+        → Badge priorité coloré P1/P2/P3/P4
+        → Verdict binaire :
+          P1 → fond rouge "🚫 ARRÊT PRODUCTION REQUIS"
+          P2 → fond orange "⚠ PRODUCTION AUTORISÉE
+               avec surveillance. Intervention < 30 min"
+          P3 → fond jaune "✓ PRODUCTION AUTORISÉE - Surveiller"
+          P4 → fond vert "✓ PRODUCTION NORMALE"
+        → Date/heure, question posée, capteur, profil
+        → Contexte production :
+          N° lot, opérateur, recette active
+          (depuis state.get(), N/A si absent)
+        → Badge confiance HAUTE/MOYENNE/FAIBLE
 
-| Étape | Moteur | Rôle |
-|-------|--------|------|
-| **OBSERVER** | LLM | Une phrase factuelle (JSON compact uniquement) |
-| **ANALYSER** | LLM | Une phrase de contexte (JSON compact uniquement) |
-| **PRESCRIRE** | Python pur | Table `REGLES_PRESCRIRE` par goal + priorité |
-| **CERTIFIER** | Python pur | Template fixe + hash SHA-256 du JSON compact |
+  S2  — Résumé exécutif
+        → Texte Agent 6b
+        → 4 blocs OAPC côte à côte colorés
+        → Badge confiance
 
-### Profils utilisateur (`user_profile`)
+  S3  — Dashboard KPIs
+        → OEE/TRS, Cp/Cpk, MTBF, MTTR
+        → jauges Plotly (go.Indicator)
+        → Calculés Python pur TimescaleDB
+        → JAMAIS via LLM
 
-`operateur` | `technicien` | `ingenieur` | `directeur` (défaut : `technicien`)
+  S4  — Graphique principal
+        → Série temporelle capteur cible
+        → Moyenne mobile fenêtre 10
+        → ±2σ VERT transparent
+        → ±3σ ROUGE transparent
+        → Anomalies croix rouges
+        → Axe Y : f"{target_column} (valeur brute)"
+        → Top 3 anomalies avec timestamp
+        → Taille 1200×400px
 
-### Budgets tokens par profil
+  S5  — Tendance vs historique
+        → Résultats agent_tendance
+        → Comparaison semaine précédente
+        → Évolution % indicateurs
+        → Phrase Agent 6b_tendance (optionnel)
 
-| Profil | num_predict | temperature |
-|--------|-------------|-------------|
-| operateur | 150 | 0.1 |
-| technicien | 250 | 0.2 |
-| ingenieur | 350 | 0.3 |
-| directeur | 200 | 0.2 |
+  S6  — Interprétations par méthode
+        → 1 bloc par spécialiste
+        → Texte Agent 6a
+        → Métriques formatées (jamais dict brut)
+        → Badge judge_valid ✓ ou ✗
+        → Adapté profil :
+          operateur → verdict seulement
+          technicien → métriques essentielles (max 3)
+          ingenieur → toutes métriques
+          directeur → verdict + impact
 
-### Mots interdits par profil
+  S7  — Causes probables
+        → Tableau Python pur
+        → Colonnes : Cause / Indice (/100) / Agent
+        → Barres colorées proportionnelles
+        → NOTE : "Scores indépendants par méthode.
+          Ne se somment pas."
+        → Max 5 causes
 
-- **operateur** : z-score, zscore, écart-type, variance, p-value, shapiro, anova, médiane, percentile
-- **directeur** : z-score, zscore, écart-type, shapiro, anova
-- **technicien / ingenieur** : aucune liste (jargon autorisé)
+  S8  — Heatmap corrélations
+        → Matrice Plotly
+        → Capteurs liés identifiés
 
-### Validation post-LLM
+  S9  — Impact financier
+        → Waterfall chart Plotly
+        → Coût estimé si non traité
+        → Économie réalisée
+        → NOTE : "Estimation indicative.
+          Adapter au coût réel de l'usine."
 
-- **Souple sur la forme** : variantes `OBSERVER:` / `OBSERVER :` / casse mixte / deux-points optionnels
-- **Stricte sur le fond** :
-  - chiffres inventés rejetés (**tous les profils**, tolérance ±0,5)
-  - mots interdits rejetés selon le profil
-- **Fallback** : template déterministe après 3 échecs LLM
+  S10 — Recommandations + RAG
+        → 3 actions max priorisées
+        → Délai + responsable
+        → Référence manuelle + page exacte
+        → Texte Agent 6b_reco
 
-### Niveaux d'alerte (Python pur)
+  S11 — Annexe technique
+        → ingénieur : complète (tous agents)
+        → technicien : simplifiée (3 métriques max)
+        → operateur : ABSENTE
+        → directeur : ABSENTE
 
-`P1` > `P2` > `P3` > `P4` — déterminés par `_determine_priority()` selon le `goal` et les `validated_results` (Cpk, % anomalies, dérive, etc.)
+  S12 — Traçabilité EN9100
+        → Version IndustrIA v2.1
+        → Horodatage milliseconde
+        → Question + cible + priorité + profil
+        → Liste agents appelés
+        → N spécialistes + N warnings
+        → SHA-256 de :
+          question + json_compact + rapport_oapc + timestamp
+        → Double signature ReportLab propre :
+          Zone 1 — Opérateur terrain
+            Nom : ____________
+            Date : ___________
+            Signature : ______
+          Zone 2 — Responsable qualité
+            Nom : ____________
+            Date : ___________
+            Signature : ______
+        → Mention : "Document non modifiable
+          après signature — conservation 10 ans"
 
-REÇOIT :
-  `state["validated_results"]`, `state["intention"]`, `state["target_column"]`, `state["user_profile"]`
-
-RETOURNE :
-  ```python
-  {
-    "agent": "agent_5_interpreter",
-    "status": "success"|"error",
-    "rapport": {
-      "observer": str,
-      "analyser": str,
-      "prescrire": str,
-      "certifier": str,
-      "priority": "P1"|"P2"|"P3"|"P4",
-      "user_profile": str,
-      "goal": str
-    },
-    "execution_time_ms": int,
-    "error": null
-  }
-  ```
-
-MET À JOUR LE STATE :
-  `explanation`, `recommendation`, `anomaly_detected`, `confidence`, `rapport_oapc`, `priority`
-
-RÈGLES : jamais de DataFrame ni données brutes capteurs dans le prompt LLM. JSON compact ≤ 7 clés.
-
----
-
-## AGENT 6a — Interpréteur Générique
-
-| Champ | Valeur |
-|-------|--------|
-| Rôle | Interpréter **un** résultat statistique en français, adapté au profil |
-| Appels | **N fois** via LangGraph — une fois par spécialiste avec résultat valide |
-| Modèle | qwen2.5-coder:14b |
-| temperature | 0.1 |
-| num_predict | 150 max |
-| LLM | OUI — texte court uniquement |
-
-### Règle absolue
-
-Le LLM reçoit uniquement les **métriques clés** pré-sélectionnées par Python (3–4 clés max, jamais de données brutes). Python choisit les métriques selon le type de spécialiste.
-
-### Métriques envoyées par spécialiste
-
-| Spécialiste | Clés JSON (max 4) |
-|-------------|-------------------|
-| ZScoreSpecialist | `anomalies_count`, `max_zscore`, `pourcentage_anomalies`, `anomalie_process_count` |
-| SpcSpecialist | `sous_controle`, `hors_limites_x_count`, `UCL_x`, `LCL_x` |
-| EwmaCusumSpecialist | `derive_detectee`, `tendance_direction`, `ewma_alertes_count` |
-| CpCpkSpecialist | `Cpk`, `Cp`, `conforme_EN9100`, `interpretation_Cpk` |
-| CorrelationSpecialist | `n_correlations_significatives`, `correlation_max_colonne`, `correlation_max_r` |
-| RegressionSpecialist | `meilleure_variable`, `r_squared`, `interpretation` |
-| MannKendallSpecialist | `tendance`, `p_value`, `sen_slope` |
-| AnovaKruskalSpecialist | `methode_choisie`, `significatif`, `interpretation` |
-| PivotSpecialist | `global_mean`, `global_std`, `global_min`, `global_max` |
-| FourierSpecialist | `signal_periodique`, `frequence_dominante`, `interpretation` |
-
-### Sortie
-
-- Texte **1–3 phrases** en français, adapté à `user_profile`
-- Jamais de chiffre inventé
-- Validation post-génération Python
-- Fallback template après 3 échecs
-
-MET À JOUR LE STATE : `state["interpretations"][nom_specialiste] = texte`
-
----
-
-## AGENT 6b — Synthèse Globale
-
-| Champ | Valeur |
-|-------|--------|
-| Rôle | Synthétiser les interprétations en **résumé exécutif** |
-| Appels | **1 seule fois**, après tous les 6a |
-| Modèle | qwen2.5-coder:14b |
-| temperature | 0.1 |
-| num_predict | 250 max |
-| LLM | OUI — résumé exécutif uniquement |
-
-### JSON entrant (compact, ≤ 4 clés)
-
-`priority`, `goal`, `target_column`, `n_specialistes`, `n_anomalies_total` (agrégats Python — **jamais** les textes bruts des 6a, pour limiter le contexte).
-
-### Sortie
-
-- Résumé exécutif **3–5 phrases**, adapté au `user_profile`
-- Validation post-génération Python
-- Fallback template après 3 échecs
-
-MET À JOUR LE STATE : `state["resume_executif"]`
+  RÈGLES PDF ABSOLUES :
+  → Jamais de page vide
+  → Jamais de dict Python brut affiché
+  → Jamais de None visible → "N/A"
+  → Jamais de liste Python brute → "N éléments"
+  → Unités toujours précisées sur les axes
+  → En-tête/pied de page sur chaque page :
+    gauche : "IndustrIA v2.1"
+    droite : date + heure
+    pied centre : "Page X / Y"
+    pied droite : SHA-256 (8 premiers chars)
+  → Marges : 1.5cm partout
+  → PageBreak uniquement si nécessaire
+  → Couleurs : vert=OK, orange=surveillance, rouge=critique
+  → Probabilités/scores : toujours "indices /100"
+    JAMAIS présentés comme probabilités classiques
+  → Texte des judge_warnings : JAMAIS affiché dans le PDF
+    (compteur N warnings autorisé en traçabilité uniquement)
 
 ---
 
-## AGENT 6c — Constructeur PDF
+COUCHE 3 — MONITORING
 
-| Champ | Valeur |
-|-------|--------|
-| Fichier | `enterprise/agents/report_agent.py` (refactor cible) |
-| Librairies | ReportLab + Plotly |
-| LLM | **NON** — 100 % Python pur |
+monitoring/cron_monitor.py
+  → orchestre tout
+  → tâche cron toutes les heures
+  → déclenche si z-score > 3
 
-Assemble le PDF à partir des sorties Agent 5 (`rapport_oapc`), 6a (`interpretations`), 6b (`resume_executif`) et des `validated_results`.
+monitoring/agent_zscore_monitor.py (Python pur)
+  → z-score glissant sur TimescaleDB
+  → calcul déterministe sans LLM
+  → si z-score > 3 → déclenche pipeline LangGraph complet
+  → génère rapport OAPC automatique
 
-### Structure du PDF (7 sections logiques)
+monitoring/agent_alert_manager.py (Python pur)
+  → crée alertes P1/P2/P3/P4
+  → niveaux automatiques :
+    P1 : z-score > 7 ou Cpk < 0.67
+    P2 : z-score > 5 ou anomalies > 3 consécutives
+    P3 : z-score > 3 isolé
+    P4 : dérive Mann-Kendall confirmée
+  → escalade P1 non acquitté sous 5min
+    → notification responsable
+  → persistance immuable TimescaleDB
 
-**Page de garde** : logo IndustrIA, titre, date/heure, badge priorité P1–P4, question, profil.
-
-**Section 1 — Résumé exécutif** : texte Agent 6b ; verdict OAPC en 4 blocs colorés (OBSERVER, ANALYSER, PRESCRIRE, CERTIFIER depuis Agent 5).
-
-**Section 2 — Graphique principal** : série temporelle cible, moyenne mobile (fenêtre 10), bandes ±2σ (vert) et ±3σ (rouge), anomalies en croix rouges ; axe Y : `nom_capteur (unité)` ou `(valeur brute)` si unité inconnue.
-
-**Section 3 — Interprétations** : un bloc par spécialiste ; texte 6a + tableau métriques compact ; visibilité selon profil :
-- **operateur** → verdict final seulement
-- **technicien** → métriques essentielles
-- **ingenieur** → tout
-- **directeur** → verdict + impact
-
-**Section 4 — Causes probables** : tableau Python (Cause / Probabilité / Agent), note « Probabilités indépendantes, ne somment pas à 100 % », max 5 causes triées.
-
-**Section 5 — Recommandation** : PRESCRIRE (Agent 5) en grand ; délais :
-- P1 → arrêt immédiat
-- P2 → < 30 minutes
-- P3 → < 4 heures
-- P4 → prochaine maintenance
-
-Responsable selon profil + priorité :
-- P1 → toujours chef d'atelier
-- P2 + technicien → technicien maintenance
-- P2 + ingenieur → ingénieur process
-- directeur → directeur production
-
-**Section 6 — Annexe technique** (selon profil) :
-- **ingenieur** → complète (tous agents)
-- **technicien** → simplifiée (`anomalies_count`, `max_zscore`, `sous_controle`)
-- **operateur** / **directeur** → absente
-
-**Section 7 — Traçabilité EN9100** : version IndustrIA, horodatage milliseconde, question, cible, priorité, profil, agents appelés, n spécialistes, n warnings judge ; SHA-256 de `question` + `json_compact` + `rapport_oapc` + `timestamp` ; double signature (opérateur terrain / responsable qualité).
-
-### Règles PDF
-
-- Pas de page vide, pas de `Spacer` inutile
-- Contenu dense et professionnel
-- Sections masquées selon `user_profile`
-
-MET À JOUR LE STATE : `state["pdf_path"]`
+Sprint 6 futur :
+  → agent_notifier → WebSocket push < 10s, SMS P1
+  → agent_alert_manager étendu
 
 ---
 
-## MONITORING PLANIFIÉ
-
-- Tâche **cron toutes les heures**
-- **Python pur** — z-score glissant sur l'heure écoulée (TimescaleDB)
-- Si z-score > 3 :
-  - déclenche le pipeline LangGraph complet
-  - génère rapport OAPC automatique
-  - alimente table **alertes non acquittées**
-  - niveaux P1/P2/P3/P4 automatiques
-  - escalade si P1 non acquitté sous **5 min**
-  - persistance TimescaleDB **immuable**
-
----
-
-## ACQUITTEMENT ALERTES
-
-- Bouton **Acquitter** (Streamlit)
-- Enregistre : nom opérateur, timestamp **milliseconde**, commentaire obligatoire, action corrective
-- Persistance TimescaleDB
-- Hash SHA-256 de l'acquittement
-- Conformité EN9100
+ACQUITTEMENT ALERTES (Sprint 5)
+  → Bouton acquitter Streamlit
+  → Enregistre OBLIGATOIREMENT :
+    - nom opérateur
+    - timestamp au millième de seconde
+    - commentaire (obligatoire, non vide)
+    - action corrective
+    - hash_acquittement SHA-256
+  → Persistance TimescaleDB immuable
+  → Conformité EN9100 — jamais d'acquittement anonyme
 
 ---
 
-## PERSISTANCE HISTORIQUE
+PERSISTANCE HISTORIQUE
 
-Table **`analyses_history`** (TimescaleDB) :
+TABLE analyses_history (TimescaleDB) :
+CREATE TABLE analyses_history (
+  id BIGSERIAL PRIMARY KEY,
+  user_id TEXT NOT NULL DEFAULT 'default',
+  question TEXT,
+  profil TEXT CHECK (profil IN (
+    'operateur','technicien','ingenieur','directeur')),
+  json_compact JSONB,
+  rapport_oapc TEXT,
+  priority TEXT CHECK (priority IN ('P1','P2','P3','P4')),
+  timestamp TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  hash TEXT UNIQUE,
+  acquitted BOOLEAN DEFAULT FALSE,
+  acquitted_by TEXT,
+  acquitted_at TIMESTAMPTZ,
+  acquitted_comment TEXT,
+  pdf_path TEXT
+);
+CREATE INDEX ON analyses_history (user_id, timestamp DESC);
 
-| Colonne | Type |
-|---------|------|
-| id | BIGSERIAL PRIMARY KEY |
-| user_id | TEXT NOT NULL |
-| question | TEXT |
-| profil | TEXT |
-| json_compact | JSONB |
-| rapport_oapc | TEXT |
-| priority | TEXT (P1/P2/P3/P4) |
-| timestamp | TIMESTAMPTZ DEFAULT NOW() |
-| hash | TEXT UNIQUE |
-| acquitted | BOOLEAN DEFAULT FALSE |
-| acquitted_by | TEXT |
-| acquitted_at | TIMESTAMPTZ |
-| acquitted_comment | TEXT |
+TABLE alerts (TimescaleDB) :
+CREATE TABLE alerts (
+  id BIGSERIAL PRIMARY KEY,
+  timestamp TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  target_column TEXT,
+  priority TEXT CHECK (priority IN ('P1','P2','P3','P4')),
+  zscore_max FLOAT,
+  message TEXT,
+  source TEXT DEFAULT 'cron_monitor',
+  acquitted BOOLEAN DEFAULT FALSE,
+  acquitted_by TEXT,
+  acquitted_at TIMESTAMPTZ,
+  acquitted_comment TEXT,
+  hash TEXT UNIQUE
+);
+CREATE INDEX ON alerts (priority, acquitted, timestamp DESC);
 
-- Ne jamais stocker les **données brutes capteurs**
-- Cache **SQLite** pour le mode dégradé
+TABLE acquittements (TimescaleDB) :
+CREATE TABLE acquittements (
+  id BIGSERIAL PRIMARY KEY,
+  alert_id BIGINT REFERENCES alerts(id),
+  analyse_id BIGINT REFERENCES analyses_history(id),
+  operateur TEXT NOT NULL,
+  timestamp TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  commentaire TEXT NOT NULL,
+  action_corrective TEXT,
+  hash_acquittement TEXT UNIQUE
+);
 
----
-
-## FILE D'ATTENTE OLLAMA
-
-- Lock Python **FIFO**
-- **1 seul** appel LLM à la fois
-- Indicateur de position dans la file
-- Protection CUDA Out of Memory
-- Timeout **30 secondes**
-
----
-
-## MODE DÉGRADÉ
-
-Si Ollama indisponible :
-
-- message clair à l'utilisateur
-- dernier état connu affiché
-- cache SQLite des dernières analyses
-- alertes calculées en Python pur restent actives
-
----
-
-## INTERFACE STREAMLIT
-
-- Sélecteur profil (4 niveaux)
-- Chat question/réponse + historique
-- Centre alertes + acquittement (nom + timestamp + commentaire)
-- Export PDF/CSV
-- File d'attente Ollama visible
-- Mode dégradé géré
-- **Responsive mobile**
+RÈGLE : Ne jamais stocker données brutes capteurs
+dans analyses_history. Elles sont déjà dans les hypertables.
 
 ---
 
-## KPIs DASHBOARD
-
-Tous calculés en **Python pur** via TimescaleDB. **JAMAIS** par le LLM.
-
-**Production** : OEE/TRS = Disponibilité × Performance × Qualité ; MTBF, MTTR, scrap rate
-
-**Qualité** : Cp/Cpk, First Pass Yield, PPM, taux conformité
-
-**Maintenance** : santé machine, dérive capteur
-
-**Énergie** : kWh/lot, rendement thermique
+FILE D'ATTENTE OLLAMA (Sprint 5)
+  → Python Lock FIFO
+  → 1 seul appel LLM à la fois
+  → Indicateur position dans la file
+  → Protection CUDA Out of Memory
+  → Timeout 30 secondes par appel
+  → Si timeout → fallback template
 
 ---
 
-## SCRIPT BACKTEST (Sprint 5.5)
-
-- Rejouer données CSV historiques
-- Simuler monitoring sur données passées
-- Prouver détection **avant panne**
-- Calculer ROI évité (coût arrêt × heures)
-- Argument de vente terrain
-
----
-
-## SPRINT 6 (futur)
-
-- Monitoring temps réel WebSocket **< 10 s**
-- VRAM Watchdog CUDA
-- Mode Investigation (plage temporelle)
-- Mode Comparaison A/B
-- Shift Handover fin de poste
-- Cache sémantique pgvector **< 100 ms**
-- Dashboard TV atelier (feux tricolores)
+MODE DÉGRADÉ (Sprint 5)
+  → Si Ollama indisponible :
+    → message clair à l'utilisateur
+    → afficher dernier état connu
+    → cache SQLite des dernières analyses
+    → alertes Python pures restent actives
+    → JAMAIS de crash visible
 
 ---
 
-## ARGUMENT COMMERCIAL
+INTERFACE STREAMLIT (Sprint 5)
 
-> 5000–10000 €/mois de cloud viole l'ITAR.  
-> IndustrIA tourne sur PC à 400 €.  
-> 100 % local. Auditable EN9100.  
-> Preuve sur données historiques : détection panne **48 h avant**.
+streamlit_app.py — 4 pages :
 
----
+Page 1 — Chat Q/R
+  → sélecteur profil (4 niveaux)
+  → champ question en français
+  → historique analyses (depuis analyses_history)
+  → réponse OAPC en temps réel
+  → bouton "Générer rapport PDF"
 
-## CONFIGURATION OLLAMA
+Page 2 — Centre alertes
+  → liste alertes P1/P2/P3/P4 non acquittées
+  → bouton acquitter + formulaire :
+    nom opérateur + commentaire obligatoire
+  → historique acquittements
 
-```bash
-OLLAMA_KEEP_ALIVE=-1
-OLLAMA_NUM_PARALLEL=1   # file FIFO applicative en plus
+Page 3 — Dashboard KPIs live
+  → OEE/TRS, Cp/Cpk, MTBF/MTTR
+  → calculés Python pur TimescaleDB
+  → rafraîchissement automatique
 
-# Par agent :
-agent_1 : num_ctx=8000 num_predict=150 temp=0.1
-agent_2 : num_ctx=4000 num_predict=300 temp=0.0
-agent_4a: num_ctx=2000 num_predict=150 temp=0.1
-agent_5 : num_ctx=4096  num_predict=150-350 selon profil  temp=0.1-0.3  model=14b
-agent_6a: num_ctx=4096  num_predict=150  temp=0.1  model=14b  (×N spécialistes)
-agent_6b: num_ctx=4096  num_predict=250  temp=0.1  model=14b  (×1 synthèse)
-agent_6c: aucun LLM
-```
+Page 4 — Historique analyses
+  → filtres date/profil/priorité
+  → télécharger PDF
+  → rejouer une analyse
 
----
-
-## SÉCURITÉ SQL
-
-```
-Utilisateur PostgreSQL dédié read-only
-Timeout session : 2000ms
-LIMIT 100 forcé par code Python
-sqlglot AST : bloque INSERT/UPDATE/
-              DELETE/DROP/ALTER/CREATE/TRUNCATE
-```
+Sécurité :
+  → File d'attente Ollama (Lock FIFO)
+  → Mode dégradé si Ollama down
+  → Cache SQLite
 
 ---
 
-## GESTION ERREURS
+SCRIPT BACKTEST (Sprint 5.5)
 
-```python
-# Pattern tenacity sur tous les agents LLM
-@retry(stop=stop_after_attempt(3),
-       wait=wait_exponential(min=1, max=10))
-def appel_ollama():
-    ...
-
-# Log des échecs
-failed_agents.jsonl
-```
-
----
-
-## ÉTAT LANGGRAPH (state/schema.py)
-
-```python
-class AgentState(TypedDict):
-    question: str
-    user_profile: str          # operateur|technicien|ingenieur|directeur
-    tables: list[str]
-    columns: list[str]
-    target_column: str
-    filters: dict
-    df_raw: Any
-    df_propre: Any
-    df_anomalies: Any
-    cleaning_stats: dict
-    intention: dict
-    specialist_tasks: list[dict]
-    specialist_results: list[dict]
-    validated_results: list[dict]
-    judge_warnings: list[str]
-    explanation: str
-    recommendation: str
-    rapport_oapc: dict
-    priority: str              # P1|P2|P3|P4
-    anomaly_detected: bool
-    confidence: str
-    interpretations: dict      # nom spécialiste -> texte Agent 6a
-    resume_executif: str        # texte Agent 6b
-    pdf_path: str
-    analyses_history: list[dict]
-    errors: list[str]
-    warnings: list[str]
-    pipeline_start_time: float
-    agents_called: list[str]
-```
+scripts/backtest.py
+  → charger CSV données historiques
+  → identifier pannes connues (timestamps + descriptions)
+  → simuler monitoring z-score glissant sur toute la période
+  → vérifier si alerte aurait été déclenchée avant chaque panne
+  → calculer :
+    délai détection (heures avant panne)
+    coût évité (FINANCIAL_PARAMS)
+    taux détection (%)
+  → générer rapport PDF "preuve terrain"
+  → "On aurait détecté cette panne Xh avant"
+  → "Économie estimée : Xk€"
 
 ---
 
-## SPRINTS
+RAG DOCUMENTAIRE (Sprint 5.5)
 
-```
-Sprint 1 ✅ DONE (prototype)
-Sprint 2 ✅ agent_1, agent_2, agent_3
-Sprint 3 ✅ spécialistes MVP
-Sprint 4 ✅ agent_4a, agent_4b, judge, LangGraph
-Sprint 5 → agent_5 OAPC, agents 6a/6b/6c (rapport),
-           Streamlit, monitoring cron, acquittement,
-           historique, file Ollama, mode dégradé, KPIs
-Sprint 5.5 → script backtest CSV / ROI
-Sprint 6 → WebSocket, pgvector, dashboard TV, …
-```
+enterprise/rag/context_agent.py
+  → ChromaDB local
+  → embeddings depuis data/manuals/ PDFs
+  → similarité cosinus Python pur
+  → extrait page exacte du manuel
+  → retourne : {fichier, page, texte_extrait}
+  → JAMAIS le LLM ne cherche dans les docs
+  → Le LLM reformule uniquement
 
 ---
 
-## LICENCE
+KPIs DASHBOARD
+  Tous calculés Python pur via TimescaleDB.
+  JAMAIS calculés par le LLM.
 
-```
-core/        Apache 2.0 (open source)
-enterprise/  BSL 1.1 (commercial)
-```
+  Production :
+  → OEE/TRS = Disponibilité × Performance × Qualité (cible ≥ 85%)
+  → Taux disponibilité (cible ≥ 90%)
+  → Taux performance (cible ≥ 95%)
+  → Taux qualité / First Pass Yield (cible ≥ 99%)
+  → MTBF (cible ≥ 2000h)
+  → MTTR (cible < 2h)
+  → Scrap Rate (cible < 1%)
+
+  Qualité :
+  → Cp/Cpk (Cp ≥ 1.33, Cpk ≥ 1.0)
+  → PPM
+  → Taux conformité
+
+  Maintenance :
+  → Santé machine
+  → Dérive capteur
+  → Taux maintenance planifiée (cible ≥ 85%)
+
+  Énergie :
+  → kWh/lot
+  → Rendement thermique
 
 ---
 
-*IndustrIA — moteur d'investigation statistique
-industrielle assisté par IA locale souveraine*
-*Version 2.1 — validé par 4 LLMs*
+COUCHE 5 — INFRASTRUCTURE
+
+Hardware : RTX 3060 12Go VRAM
+           PC bureau standard
+           Zéro cloud — ITAR compliant — Air-gapped possible
+
+LLM :
+  → Ollama localhost:11434
+  → OLLAMA_KEEP_ALIVE=-1 (modèles en VRAM entre appels)
+  → qwen2.5-coder:7b (agents 1-4)
+  → qwen2.5-coder:14b (agents 5-6)
+  → File d'attente Lock FIFO (1 seul appel à la fois)
+  → Timeout 30 secondes par appel
+
+Base de données :
+  → TimescaleDB (Docker) — données capteurs + historique
+  → postgres_readonly (sandbox SQL, jamais d'écriture)
+  → ChromaDB (RAG local manuels maintenance)
+  → SQLite (cache mode dégradé)
+
+Orchestration :
+  → LangGraph StateGraph
+  → AgentState TypedDict (state/schema.py)
+
+Licences :
+  → core/ Apache 2.0 (open source)
+  → enterprise/ BSL 1.1 (commercial)
+  → Ne jamais mélanger les deux
+
+---
+
+DÉCOMPTE AGENTS (32 total)
+
+5  → Pipeline Q/R (Agents 1, 2, 3, 4a, 4b)
+12 → Spécialistes + Judge (11 + 1)
+1  → Mode Chat (Agent 5 OAPC)
+9  → Mode Rapport :
+     agent_6a, agent_6b, agent_6b_tendance, agent_6b_reco,
+     agent_6c_pdf, agent_kpis, agent_tendance,
+     agent_heatmap, agent_financier, agent_causes,
+     context_agent
+3  → Monitoring (cron_monitor, zscore_monitor, alert_manager)
+2  → Fondation (styles, charts, formatters)
+
+---
+
+ROADMAP SPRINTS
+
+Sprint 1 ✅ Prototype initial
+Sprint 2 ✅ Agents 1-2-3
+Sprint 3 ✅ 11 spécialistes Python purs
+Sprint 4 ✅ Agent 4a-4b + Judge + LangGraph pipeline
+Sprint 5 🔄 En cours :
+  ✅ Agent 5 OAPC
+  ✅ Agent 6a interprétation générique
+  ✅ Agent 6b synthèse globale
+  ✅ Agent 6c PDF (version basique)
+  ⏳ Fondation report (styles/charts/formatters)
+  ⏳ data/config.py
+  ⏳ Agents calcul (kpis/tendance/heatmap/financier/causes)
+  ⏳ RAG context_agent
+  ⏳ Agents LLM (6b_tendance, 6b_reco)
+  ⏳ Agent 6c PDF premium 12 sections
+  ⏳ Monitoring (cron/zscore/alert_manager)
+  ⏳ Streamlit interface
+  ⏳ File d'attente Ollama + mode dégradé
+  ⏳ Acquittement + historique
+
+Sprint 5.5 :
+  ⏳ Script backtest données historiques
+  ⏳ RAG documentaire ChromaDB
+  ⏳ data/config.py paramètres usine complets
+
+Sprint 6 :
+  ⏳ Monitoring temps réel WebSocket < 10s
+  ⏳ VRAM Watchdog CUDA
+  ⏳ Mode Investigation (plage temporelle)
+  ⏳ Mode Comparaison A/B
+  ⏳ Shift Handover automatique fin de poste
+  ⏳ Cache sémantique pgvector < 100ms
+  ⏳ Dashboard TV atelier feux tricolores
+  ⏳ agent_notifier WebSocket + SMS
+  ⏳ Agent matrix_profile (stumpy)
+  ⏳ Agent méta-analyse consolidé
+  ⏳ Agent simulation what-if dédié
+
+---
+
+ARGUMENT COMMERCIAL
+
+"Braincube/Sight Machine :
+ 5000-10000€/mois, données sur cloud,
+ violation ITAR potentielle.
+
+IndustrIA :
+ PC à 400€, 100% local, air-gapped,
+ auditrable EN9100 du premier coup.
+
+Preuve terrain (script backtest Sprint 5.5) :
+ On rejoue vos données historiques
+ et on vous prouve qu'on aurait détecté
+ votre dernière panne 48h avant.
+ Économie estimée : Xk€."

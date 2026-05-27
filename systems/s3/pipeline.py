@@ -1,0 +1,73 @@
+"""
+Orchestration S3 — df_propre + intent → métriques structurées.
+"""
+
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
+import pandas as pd
+
+from systems.s1.client_context import ClientContext
+from systems.s3 import dispatcher, executor, judge
+
+if TYPE_CHECKING:
+    pass
+
+
+class S3Pipeline:
+    def __init__(self, yaml_path: str) -> None:
+        self.yaml_path = yaml_path
+        self.ctx = ClientContext.load(yaml_path)
+
+    def run(self, intent: dict, df_propre: pd.DataFrame) -> dict:
+        trace: list[dict] = []
+        try:
+            if intent.get("clarification_needed"):
+                return {
+                    "specialist_results": [],
+                    "metrics_summary": {},
+                    "warnings": [],
+                    "pipeline_trace": trace,
+                    "error": "Intent S1 incomplet — clarification requise avant S3",
+                }
+
+            disp = dispatcher.dispatch(intent)
+            trace.append({"step": "dispatcher", "ok": disp.get("error") is None})
+            if disp.get("error"):
+                return self._empty_error(disp["error"], trace)
+
+            exec_res = executor.run_all(
+                df_propre, intent, self.ctx, disp["specialists"]
+            )
+            trace.append({"step": "executor", "ok": exec_res.get("error") is None})
+            if exec_res.get("error"):
+                return self._empty_error(exec_res["error"], trace)
+
+            judged = judge.validate_results(exec_res["specialist_results"])
+            trace.append({"step": "judge", "ok": judged.get("error") is None})
+            if judged.get("error"):
+                return self._empty_error(judged["error"], trace)
+
+            results = judged["specialist_results"]
+            metrics_summary = judge.build_metrics_summary(results)
+
+            return {
+                "specialist_results": results,
+                "metrics_summary": metrics_summary,
+                "warnings": judged.get("warnings", []),
+                "pipeline_trace": trace,
+                "error": None,
+            }
+        except Exception as exc:  # noqa: BLE001
+            return self._empty_error(str(exc), trace)
+
+    @staticmethod
+    def _empty_error(message: str, trace: list[dict]) -> dict:
+        return {
+            "specialist_results": [],
+            "metrics_summary": {},
+            "warnings": [],
+            "pipeline_trace": trace,
+            "error": message,
+        }
