@@ -56,13 +56,13 @@ Python = tous les calculs et décisions méthodologiques.
 - enterprise/rag/ → S6
 
 ## Statut
-- S0 : ✅ YAML LISI défini
-- S1 : ✅ VALIDÉ (spec dans docs/S1.md)
-  - 32 tests passent (LISI + client générique)
-  - Multi-client validé via YAML S0 uniquement
-  - Code dans systems/s1/
-- S2 : ✅ VALIDÉ — 6 tests, données LISI réelles
-- S3 à S8 : ⏳ À FAIRE
+- S0 : ✅ YAML LISI + client générique (`configs/`)
+- S1 : ✅ VALIDÉ — 32+ tests (`systems/s1/`, docs/S1.md)
+- S2 : ✅ VALIDÉ — 6 tests LISI (`systems/s2/`, docs/S2.md)
+- S3 : ✅ VALIDÉ — métriques + pre-gates (`systems/s3/`, docs/S3.md)
+- S4 : ✅ VALIDÉ — graphiques + tableaux (`systems/s4/`, docs/S4.md)
+- S5 : ✅ VALIDÉ — interprétation vérifiée, E2E LISI (`systems/s5/`, `tests/test_pipeline_e2e.py`, docs/S5.md)
+- S6 à S8 : ⏳ À FAIRE (reco/RAG, PDF EN9100, monitoring)
 
 ## Méthode
 Un système à la fois.
