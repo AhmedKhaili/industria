@@ -14,11 +14,11 @@ Un technicien pose une question en français ; le pipeline comprend l’intentio
 | S3 | Métriques (`specialists/`) | Validé |
 | S4 | Graphiques + descriptions tabulaires | Validé |
 | S5 | Interprétation LLM vérifiée (Ollama 14b) | Validé + E2E |
-| S6 | Recommandations + RAG | En cours |
+| S6 | Recommandations actionnelles (P1–P4, profil) | Codé — tests LISI + critiques |
 | S7 | Rapport PDF EN9100 | En cours |
 | S8 | Monitoring temps réel | En cours |
 
-Détail : [`docs/VISION.md`](docs/VISION.md) · specs : [`docs/S1.md`](docs/S1.md) … [`docs/S5.md`](docs/S5.md)
+Détail : [`docs/VISION.md`](docs/VISION.md) · specs : [`docs/S1.md`](docs/S1.md) … [`docs/S6.md`](docs/S6.md)
 
 ## Démarrage rapide
 
@@ -59,7 +59,7 @@ python -m pytest tests/test_pipeline_e2e.py -v   # chaîne S1→S5, données LIS
 ## Structure du dépôt
 
 ```text
-systems/s1/ … s5/     # Pipelines v4.0 (open core)
+systems/s1/ … s6/     # Pipelines v4.0 (open core)
 configs/              # YAML multi-client (S0)
 specialists/          # Calculs statistiques (S3)
 enterprise/           # PDF, RAG, agents legacy v3 (BSL 1.1)

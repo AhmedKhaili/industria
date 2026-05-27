@@ -36,6 +36,7 @@ class ClientContext:
     regles_nettoyage: dict
     temps: dict
     profils: dict
+    recommandations: dict
     financier: dict
     machine_sens: dict
     s1_piece_patterns: list
@@ -84,6 +85,7 @@ class ClientContext:
             regles_nettoyage=dict(dataset.get("regles_nettoyage", {})),
             temps=dict(raw.get("temps", {})),
             profils=dict(raw.get("profils", {})),
+            recommandations=dict(raw.get("recommandations", {})),
             financier=dict(raw.get("financier", {})),
             machine_sens=dict(dataset.get("machine_sens_par_operation", {})),
             s1_piece_patterns=s1_piece_patterns,
@@ -185,6 +187,10 @@ class ClientContext:
         if "[" in pattern:
             return [t for t in all_tags if re.search(regex, t)]
         return [t for t in all_tags if fnmatch.fnmatch(t, pattern)]
+
+    def get_recommandations(self) -> dict:
+        """Section YAML recommandations (S6) — seuils, délais, responsables."""
+        return self.recommandations if isinstance(self.recommandations, dict) else {}
 
     def facteur_colonne(
         self, facteur_key: str, scope: str | None = None

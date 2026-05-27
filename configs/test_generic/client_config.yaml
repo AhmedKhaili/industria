@@ -85,5 +85,37 @@ pieces:
           DIA_01: {lti: 19.9, lts: 20.1, nominal: 20.0, unite: "mm"}
 
 temps: {}
-profils: {}
+
+recommandations:
+  seuils_cpk:
+    p1_sous: 1.0
+    p2_sous: 1.33
+    p3_sous: 1.67
+  zscore:
+    absolu_p1: 3.0
+    anomaly_pct_p1: 20.0
+    anomaly_pct_p2: 10.0
+  delais:
+    P1: "immédiat"
+    P2: "48 heures"
+    P3: "semaine en cours"
+    P4: "surveillance standard"
+  responsables_par_profil:
+    operateur: "chef d'équipe"
+    technicien: "responsable qualité"
+    ingenieur: "direction technique"
+    directeur: "direction générale"
+  regroupement_causes: []
+  rag:
+    min_relevance: 0.7
+    message_vide: "Aucune procédure locale trouvée. Contacter l'ingénieur procédé."
+  detail_par_profil:
+    technicien:
+      inclure_priorites: ["P1", "P2", "P3", "P4"]
+      agreger_p2_p3: false
+
+profils:
+  technicien:
+    tokens_max: 250
+    forbidden_words: []
 financier: {}

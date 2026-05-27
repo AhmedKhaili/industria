@@ -749,6 +749,55 @@ contrat_rapport:
     P4: {max_pages: 10, titre: "Rapport d'analyse"}
 
 # ============================================================
+# RECOMMANDATIONS S6 — priorités, délais, responsables
+# ============================================================
+
+recommandations:
+  seuils_cpk:
+    p1_sous: 1.0
+    p2_sous: 1.33
+    p3_sous: 1.67
+  zscore:
+    absolu_p1: 3.0
+    anomaly_pct_p1: 20.0
+    anomaly_pct_p2: 10.0
+  delais:
+    P1: "immédiat"
+    P2: "48 heures"
+    P3: "semaine en cours"
+    P4: "surveillance standard"
+  responsables_par_profil:
+    operateur: "chef d'équipe"
+    technicien: "responsable qualité"
+    ingenieur: "direction technique"
+    directeur: "direction générale"
+  regroupement_causes:
+    - colonne: "Numero Machine"
+      label: "machine"
+    - colonne: "Ref_Matrice"
+      label: "matrice"
+    - colonne: "PAS_E_Fournisseur"
+      label: "fournisseur"
+  rag:
+    min_relevance: 0.7
+    message_vide: "Aucune procédure locale trouvée. Contacter l'ingénieur procédé."
+  detail_par_profil:
+    directeur:
+      inclure_priorites: ["P1", "P2", "P3", "P4"]
+      agreger_p2_p3: true
+      max_lignes_hors_p1: 2
+    operateur:
+      inclure_priorites: ["P1", "P2", "P3", "P4"]
+      agreger_p2_p3: true
+      max_lignes_hors_p1: 5
+    technicien:
+      inclure_priorites: ["P1", "P2", "P3", "P4"]
+      agreger_p2_p3: false
+    ingenieur:
+      inclure_priorites: ["P1", "P2", "P3", "P4"]
+      agreger_p2_p3: false
+
+# ============================================================
 # PROFILS UTILISATEURS
 # ============================================================
 
