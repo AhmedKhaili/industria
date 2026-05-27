@@ -37,6 +37,7 @@ class ClientContext:
     temps: dict
     profils: dict
     recommandations: dict
+    rapport_pdf: dict
     financier: dict
     machine_sens: dict
     s1_piece_patterns: list
@@ -86,6 +87,7 @@ class ClientContext:
             temps=dict(raw.get("temps", {})),
             profils=dict(raw.get("profils", {})),
             recommandations=dict(raw.get("recommandations", {})),
+            rapport_pdf=dict(raw.get("rapport_pdf", {})),
             financier=dict(raw.get("financier", {})),
             machine_sens=dict(dataset.get("machine_sens_par_operation", {})),
             s1_piece_patterns=s1_piece_patterns,
@@ -191,6 +193,15 @@ class ClientContext:
     def get_recommandations(self) -> dict:
         """Section YAML recommandations (S6) — seuils, délais, responsables."""
         return self.recommandations if isinstance(self.recommandations, dict) else {}
+
+    def get_rapport_pdf(self) -> dict:
+        """Section YAML rapport_pdf (S7) — limites graphiques, libellés verdict."""
+        return self.rapport_pdf if isinstance(self.rapport_pdf, dict) else {}
+
+    def get_contrat_rapport(self) -> dict:
+        """Section YAML contrat_rapport — exigences EN9100 du PDF."""
+        raw = self.raw.get("contrat_rapport", {})
+        return raw if isinstance(raw, dict) else {}
 
     def facteur_colonne(
         self, facteur_key: str, scope: str | None = None

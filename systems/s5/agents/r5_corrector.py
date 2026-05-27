@@ -25,7 +25,7 @@ def run(interpretations: list[dict], warnings: list[str]) -> dict:
             )
             texte = llm_client.chat(prompt, temperature=0.1)
             if texte:
-                entry["texte"] = texte
+                entry["texte"] = prep.strip_llm_meta_from_interpretation(texte)
                 entry["statut"] = "Accept"
             corrected.append(entry)
 

@@ -727,6 +727,23 @@ temps:
       requete_sql: "SELECT date_debut, date_fin FROM lots ORDER BY id DESC LIMIT 1"
 
 # ============================================================
+# RAPPORT PDF S7 — mise en page et libellés verdict
+# ============================================================
+
+rapport_pdf:
+  version: "4.0"
+  industria_version: "v4.0"
+  max_graphiques_directeur: 3
+  max_graphiques_technicien: 12
+  max_graphiques_operateur: 8
+  sauvegarder_dans: "reports/"
+  verdict_libelles:
+    GO: "GO — Procédé sous contrôle"
+    NO_GO: "NO-GO — Action corrective requise"
+    NO_GO_OPERATIONNEL: "NO-GO opérationnel — Intervention urgente"
+    SURVEILLANCE: "SURVEILLANCE — Suivi renforcé"
+
+# ============================================================
 # CONTRAT RAPPORT — exigences qualité du rapport final
 # ============================================================
 

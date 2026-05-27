@@ -27,6 +27,68 @@ def canonical_agent(agent: str | None) -> str:
     return _AGENT_ALIASES.get(agent, str(agent).strip().lower())
 
 
+_META_CUT_PATTERNS = [
+    re.compile(r"(?i)explications\s+des\s+modifications"),
+    re.compile(r"(?i)\*\*explications\s+des\s+modifications"),
+    re.compile(r"(?i)texte\s+original\s*:"),
+    re.compile(r"(?i)\*\*avertissements\s+syst[eè]me\s*:\*\*"),
+]
+_META_LINE_PATTERNS = [
+    re.compile(r"(?i)^\s*\d+\.\s+\*\*"),
+    re.compile(r"(?i)^\s*[-*]\s+interprétation\s+automatique\s+indisponible"),
+]
+
+
+def strip_llm_meta_from_interpretation(text: str) -> str:
+    """Retire le bavardage de correction LLM (R5) — jamais dans un PDF client."""
+    if not text:
+        return ""
+    out = text.strip()
+    lead = re.search(r"(?is)voici\s+le\s+texte\s+corrig[^:]*:\s*(?:---\s*)?", out)
+    if lead:
+        out = out[lead.end() :].strip()
+    else:
+        out = re.sub(
+            r"(?is)^\s*voici\s+le\s+texte\s+corrig[^.\n]*[.\n]?\s*[-—]*\s*",
+            "",
+            out,
+        )
+    out = re.sub(r"(?is)^\s*---\s*", "", out)
+    for pat in _META_CUT_PATTERNS:
+        m = pat.search(out)
+        if m:
+            out = out[: m.start()].strip()
+    out = re.sub(
+        r"(?i)interprétation\s+automatique\s+indisponible\s+pour\s+cp_cpk[^.]*\.?\s*",
+        "",
+        out,
+    )
+    lines: list[str] = []
+    for line in out.splitlines():
+        stripped = line.strip()
+        if not stripped:
+            continue
+        if any(p.search(stripped) for p in _META_LINE_PATTERNS):
+            break
+        lines.append(stripped)
+    out = " ".join(lines) if lines else out
+    return re.sub(r"\s{2,}", " ", out).strip()
+
+
+def looks_like_llm_meta_artifact(text: str) -> bool:
+    low = text.lower()
+    return any(
+        m in low
+        for m in (
+            "explications des modifications",
+            "voici le texte corrig",
+            "texte original :",
+            "précision de la p-value",
+            "formatage et lisibilité",
+        )
+    )
+
+
 def profile_config(context: "ClientContext", profile: str) -> dict:
     profils = context.profils or {}
     default = profils.get("technicien", {})

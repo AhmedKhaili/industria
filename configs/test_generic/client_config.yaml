@@ -86,6 +86,18 @@ pieces:
 
 temps: {}
 
+rapport_pdf:
+  version: "4.0"
+  industria_version: "v4.0"
+  max_graphiques_directeur: 3
+  max_graphiques_technicien: 12
+  sauvegarder_dans: "reports/"
+  verdict_libelles:
+    GO: "GO — Procédé sous contrôle"
+    NO_GO: "NO-GO — Action corrective requise"
+    NO_GO_OPERATIONNEL: "NO-GO opérationnel — Intervention urgente"
+    SURVEILLANCE: "SURVEILLANCE — Suivi renforcé"
+
 recommandations:
   seuils_cpk:
     p1_sous: 1.0

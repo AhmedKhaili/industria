@@ -62,8 +62,9 @@ Python = tous les calculs et décisions méthodologiques.
 - S3 : ✅ VALIDÉ — métriques + pre-gates (`systems/s3/`, docs/S3.md)
 - S4 : ✅ VALIDÉ — graphiques + tableaux (`systems/s4/`, docs/S4.md)
 - S5 : ✅ VALIDÉ — interprétation vérifiée, E2E LISI (`systems/s5/`, `tests/test_pipeline_e2e.py`, docs/S5.md)
-- S6 : ✅ CODÉ — recommandations P1–P4 (`systems/s6/`, docs/S6.md, tests LISI + critiques)
-- S7 à S8 : ⏳ À FAIRE (PDF EN9100, monitoring)
+- S6 : ✅ VALIDÉ — recommandations P1–P4 (`systems/s6/`, docs/S6.md, tests LISI + critiques)
+- S7 : ✅ VALIDÉ — PDF EN9100 SHA-256, démo LISI v3 (`systems/s7/`, docs/S7.md, `report_port` + `renderer_stub`, 9 tests)
+- S8 : ⏳ PROCHAIN — monitoring temps réel, alertes P1–P4 (spec `docs/S8.md` à rédiger avant code)
 
 ## Méthode
 Un système à la fois.

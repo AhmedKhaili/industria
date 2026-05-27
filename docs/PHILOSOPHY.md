@@ -187,8 +187,13 @@ Imports cross-licence interdits.
 
 ## 21. RÈGLE SHA-256
 
-Le SHA-256 du rapport couvre TOUJOURS :
-question + json_compact + rapport_oapc + timestamp.
+Pipeline v4 (S7) — empreinte sur contenu métier figé avant mise en page :
+question + intent (JSON trié) + specialist_results (JSON trié)
++ recommandations S6 (JSON trié) + synthese S5 + synthese_action S6
++ fidelite_score + timestamp ISO8601.
+Exclus du hash : pdf_bytes, PNG, interprétations graphiques, warnings.
+
+Pipeline v3 (legacy) : question + json_compact + rapport_oapc + timestamp.
 Jamais un SHA-256 partiel pour un rapport EN9100.
 
 ## 22. RÈGLE PDF COULEURS

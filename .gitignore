@@ -223,4 +223,5 @@ data/cache/
 data/chroma_db/
 reports/*.pdf
 reports/
+rapport_*.pdf
 enterprise/agents/*_backup.py

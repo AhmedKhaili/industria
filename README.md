@@ -14,11 +14,11 @@ Un technicien pose une question en français ; le pipeline comprend l’intentio
 | S3 | Métriques (`specialists/`) | Validé |
 | S4 | Graphiques + descriptions tabulaires | Validé |
 | S5 | Interprétation LLM vérifiée (Ollama 14b) | Validé + E2E |
-| S6 | Recommandations actionnelles (P1–P4, profil) | Codé — tests LISI + critiques |
-| S7 | Rapport PDF EN9100 | En cours |
-| S8 | Monitoring temps réel | En cours |
+| S6 | Recommandations actionnelles (P1–P4, profil) | Validé — tests LISI + critiques |
+| S7 | Rapport PDF EN9100 (SHA-256, `contrat_rapport`) | Validé — démo LISI (`systems/s7/`, 9 tests) |
+| S8 | Monitoring temps réel, alertes P1–P4 | Prochain — spec à rédiger |
 
-Détail : [`docs/VISION.md`](docs/VISION.md) · specs : [`docs/S1.md`](docs/S1.md) … [`docs/S6.md`](docs/S6.md)
+Détail : [`docs/VISION.md`](docs/VISION.md) · specs : [`docs/S1.md`](docs/S1.md) … [`docs/S7.md`](docs/S7.md)
 
 ## Démarrage rapide
 
@@ -52,19 +52,19 @@ print(s5.get('synthese', '')[:500])
 **Tests** (Ollama requis pour E2E S5) :
 
 ```bash
-python -m pytest systems/s1/tests systems/s2/tests systems/s3/tests systems/s4/tests systems/s5/tests -q
-python -m pytest tests/test_pipeline_e2e.py -v   # chaîne S1→S5, données LISI réelles
+python -m pytest systems/s1/tests systems/s2/tests systems/s3/tests systems/s4/tests systems/s5/tests systems/s6/tests systems/s7/tests -q
+python -m pytest tests/test_pipeline_e2e.py -v   # chaîne S1→S5, données LISI réelles (Ollama)
 ```
 
 ## Structure du dépôt
 
 ```text
-systems/s1/ … s6/     # Pipelines v4.0 (open core)
+systems/s1/ … s7/     # Pipelines v4.0 (open core)
 configs/              # YAML multi-client (S0)
 specialists/          # Calculs statistiques (S3)
 enterprise/           # PDF, RAG, agents legacy v3 (BSL 1.1)
 tests/                # Tests E2E intégration
-docs/                 # VISION, PHILOSOPHY, S1–S5
+docs/                 # VISION, PHILOSOPHY, S1–S7
 data/                 # config.py + cache local (CSV non versionné)
 ```
 
