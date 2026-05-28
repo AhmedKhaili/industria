@@ -18,6 +18,8 @@ def run(
     intent: dict,
     context: "ClientContext",
     profile: str,
+    *,
+    group_ranking: dict | None = None,
 ) -> dict:
     try:
         cfg = prep.reco_config(context)
@@ -176,7 +178,36 @@ def run(
                         )
                     )
 
-        p1_items = [i for i in raw_items if i["priorite"] == "P1"]
+        ranking = group_ranking or {}
+        pire = ranking.get("pire_groupe")
+        if pire:
+            var = ranking.get("variable_pivot", "")
+            cpk = ranking.get("cpk_pivot")
+            pct = ranking.get("pire_groupe_pct_hors_tolerance")
+            raw_items.insert(
+                0,
+                _item(
+                    "P1",
+                    "matrice_prioritaire",
+                    responsable,
+                    prep.delai_for(cfg, "P1"),
+                    (
+                        f"Traiter en priorité la matrice {pire} sur {var} "
+                        f"(Cpk = {cpk}, {pct}% hors tolérance sur ce groupe)."
+                    ),
+                    f"matrice:{pire}",
+                    f"matrice {pire}",
+                    use_llm=True,
+                    chiffres={
+                        "Cpk": cpk,
+                        "colonne": var,
+                        "matrice": pire,
+                        "pct_hors_tolerance": pct,
+                    },
+                ),
+            )
+
+        p1_items = _dedupe_p1_items([i for i in raw_items if i["priorite"] == "P1"])
         other = [i for i in raw_items if i["priorite"] != "P1"]
         grouped_other = _group_by_cause(other, cfg)
         items = p1_items + grouped_other
@@ -229,6 +260,41 @@ def _item(
         "rag_excerpt": "",
         "rag_used": False,
     }
+
+
+def _dedupe_p1_items(p1_items: list[dict]) -> list[dict]:
+    """Fusionne les P1 redondantes sur la même variable / matrice (max 1 action par cause)."""
+    groups: dict[str, list[dict]] = {}
+    for it in p1_items:
+        ch = it.get("chiffres") or {}
+        col = str(ch.get("colonne") or "").strip()
+        mat = str(ch.get("matrice") or "").strip()
+        if col:
+            key = f"col:{col}"
+        elif mat:
+            key = f"matrice:{mat}"
+        else:
+            key = it.get("cause_key") or f"type:{it.get('action_type')}"
+        groups.setdefault(key, []).append(it)
+
+    merged: list[dict] = []
+    priority = {"matrice_prioritaire": 0, "capabilite_critique": 1, "anomalie_ponctuelle": 2}
+    for group in groups.values():
+        if len(group) == 1:
+            merged.append(group[0])
+            continue
+        primary = min(
+            group,
+            key=lambda x: (
+                priority.get(str(x.get("action_type")), 9),
+                prep.priority_rank(x["priorite"]),
+            ),
+        )
+        out = dict(primary)
+        out["justification"] = " | ".join(g["justification"] for g in group[:4])
+        out["use_llm"] = any(g.get("use_llm") for g in group)
+        merged.append(out)
+    return merged
 
 
 def _group_by_cause(items: list[dict], cfg: dict) -> list[dict]:

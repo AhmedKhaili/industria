@@ -99,6 +99,10 @@ rapport_pdf:
     SURVEILLANCE: "SURVEILLANCE — Suivi renforcé"
 
 recommandations:
+  synthese_interdits:
+    - "analysis_context"
+    - "cpk_summary"
+    - "anova_summary"
   seuils_cpk:
     p1_sous: 1.0
     p2_sous: 1.33

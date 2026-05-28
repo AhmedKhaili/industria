@@ -9,7 +9,8 @@ from typing import TYPE_CHECKING
 import pandas as pd
 
 from systems.s1.client_context import ClientContext
-from systems.s3 import dispatcher, executor, judge
+from systems.s3 import dispatcher, executor, group_ranking, judge
+from systems.stats_format import enrich_specialist_results_display
 
 if TYPE_CHECKING:
     pass
@@ -26,6 +27,7 @@ class S3Pipeline:
             if intent.get("clarification_needed"):
                 return {
                     "specialist_results": [],
+                    "group_ranking": {},
                     "metrics_summary": {},
                     "warnings": [],
                     "pipeline_trace": trace,
@@ -49,11 +51,19 @@ class S3Pipeline:
             if judged.get("error"):
                 return self._empty_error(judged["error"], trace)
 
-            results = judged["specialist_results"]
+            results = enrich_specialist_results_display(
+                list(judged["specialist_results"])
+            )
             metrics_summary = judge.build_metrics_summary(results)
+            ranking = group_ranking.compute_worst_group(
+                df_propre, intent, self.ctx, results
+            )
+            if ranking:
+                metrics_summary["group_ranking"] = ranking
 
             return {
                 "specialist_results": results,
+                "group_ranking": ranking,
                 "metrics_summary": metrics_summary,
                 "warnings": judged.get("warnings", []),
                 "pipeline_trace": trace,
@@ -66,6 +76,7 @@ class S3Pipeline:
     def _empty_error(message: str, trace: list[dict]) -> dict:
         return {
             "specialist_results": [],
+            "group_ranking": {},
             "metrics_summary": {},
             "warnings": [],
             "pipeline_trace": trace,

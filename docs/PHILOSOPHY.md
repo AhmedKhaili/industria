@@ -240,3 +240,36 @@ Dans systems/s1/, les agents portent des noms
 explicites : agent_1_preprocessor, agent_2_entity_extractor.
 Ces numéros N'ONT AUCUN LIEN avec les numéros
 Agent 1/2/3/4/5/6 de la v3.0 dans AGENTS.md.
+
+## 28. RÈGLE LANGAGE — ASSOCIATION ET VARIANCE (S3/S5/S6/S7)
+
+Validé avec `docs/S3-extended.md` v1.1 (GO D0 + D1).
+
+Les sorties IndustrIA décrivent des **associations statistiques**,
+pas des causalités démontrées sans étude dédiée.
+
+### Interdit dans tout texte client (PDF, synthèse, recommandations)
+
+- « causent », « cause », « à l'origine de », « responsable de »
+  (sauf citation procédure RAG entre guillemets)
+- « prouve que », « démontre que [facteur] est la cause »
+- Présenter η² (eta au carré) comme **probabilité** ou **preuve causale**
+- « distribution probable », « loi probablement » (trop fort — utiliser
+  « meilleur ajustement selon AIC »)
+
+### Formulations obligatoires
+
+- « influencent », « sont associés à », « coïncident avec »
+- « expliquent X % de la **variance** » (η² ou équivalent, phase P5+)
+- « différence significative entre groupes » (p-value certifiées Python)
+
+### Verdicts réservés au Python
+
+- Normalité : `normale` | `non_normale` (`specialists/normality.py`, P1+)
+- Loi ajustée : `loi_retenue` = argmin(AIC) (`specialists/distribution_fit.py`, P1+)
+- Significativité groupes : `significance_phrase` / `p_value_display`
+  (`systems/stats_format.py`)
+
+Le LLM **reformule** ces verdicts ; il ne les remplace pas.
+
+Spec détaillée : `docs/S3-extended.md`.

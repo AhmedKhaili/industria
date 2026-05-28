@@ -733,10 +733,40 @@ temps:
 rapport_pdf:
   version: "4.0"
   industria_version: "v4.0"
+  mode: client_quality
+  reference_prefix: RPT
   max_graphiques_directeur: 3
   max_graphiques_technicien: 12
   max_graphiques_operateur: 8
+  max_graphiques_client: 3
+  max_recommandations_client: 4
   sauvegarder_dans: "reports/"
+  bandeau_defaut_couleur: "#1565C0"
+  boxplots_prioritaires:
+    - CR70_INTRADOS_FORME
+    - CR90_INTRADOS_FORME
+    - CR10_INTRADOS_FORME
+  cpk_couleurs:
+    critique: { max: 1.0, fond: "#FFEBEE" }
+    limite: { min: 1.0, max: 1.33, fond: "#FFF3E0" }
+    conforme: { min: 1.33, fond: "#E8F5E9" }
+  verdict_bandeaux:
+    NO_GO:
+      fond: "#C62828"
+      texte: "#FFFFFF"
+      libelle: "NO-GO — Action corrective requise"
+    NO_GO_OPERATIONNEL:
+      fond: "#C62828"
+      texte: "#FFFFFF"
+      libelle: "NO-GO — Intervention urgente requise"
+    SURVEILLANCE:
+      fond: "#F57F17"
+      texte: "#FFFFFF"
+      libelle: "SURVEILLANCE — Suivi renforcé"
+    GO:
+      fond: "#2E7D32"
+      texte: "#FFFFFF"
+      libelle: "GO — Processus conforme"
   verdict_libelles:
     GO: "GO — Procédé sous contrôle"
     NO_GO: "NO-GO — Action corrective requise"
@@ -798,6 +828,25 @@ recommandations:
   rag:
     min_relevance: 0.7
     message_vide: "Aucune procédure locale trouvée. Contacter l'ingénieur procédé."
+  pire_matrice:
+    variable_pivot: "cpk_min"
+    ex_aequo: "pct_hors_tolerance"
+    critere_groupe: "pct_hors_tolerance"
+  synthese_interdits:
+    - "analysis_context"
+    - "cpk_summary"
+    - "anova_summary"
+    - "trend_summary"
+    - "descriptions_tabulaires"
+    - "specialist_results"
+    - "metrics_summary"
+    - "intent S1"
+    - "YAML client"
+    - "Ref_Matrice"
+    - "tableau présente"
+    - "pipeline"
+    - "fallback"
+    - "LLM"
   detail_par_profil:
     directeur:
       inclure_priorites: ["P1", "P2", "P3", "P4"]

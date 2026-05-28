@@ -7,13 +7,18 @@ from __future__ import annotations
 from systems.s5 import llm_client, prep
 
 
-def run(specialist_results: list[dict]) -> dict:
+def run(
+    specialist_results: list[dict],
+    intent: dict | None = None,
+) -> dict:
     try:
         interpretations: list[dict] = []
         for result in specialist_results:
             agent = prep.canonical_agent(result.get("agent"))
             if result.get("status") == "skipped":
-                texte = prep.python_fallback_interpretation(result)
+                texte = prep.python_fallback_interpretation(
+                    result, specialist_results, intent
+                )
                 interpretations.append(
                     {
                         "specialist": agent,
@@ -27,7 +32,9 @@ def run(specialist_results: list[dict]) -> dict:
             prompt = prep.format_specialist_prompt(result)
             texte = llm_client.chat(prompt)
             if not texte:
-                texte = prep.python_fallback_interpretation(result)
+                texte = prep.python_fallback_interpretation(
+                    result, specialist_results, intent
+                )
                 statut = "fallback"
             else:
                 statut = "pending"

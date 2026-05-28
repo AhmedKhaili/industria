@@ -58,6 +58,34 @@ def _unit_label(context: "ClientContext", intent: dict, variable: str) -> str:
     return "valeur brute"
 
 
+def _add_tolerance_lines(fig, tol: dict | None, *, axis: str = "y") -> None:
+    """Trace LTI / LTS / nominal sur un graphique Plotly (y = boxplot, x = histogramme)."""
+    if not tol:
+        return
+    for key, label, dash, color in (
+        ("lti", "LTI", "dash", "#DC2626"),
+        ("lts", "LTS", "dash", "#DC2626"),
+        ("nominal", "Nominal", "dot", "#1E3A5F"),
+    ):
+        if tol.get(key) is None:
+            continue
+        val = float(tol[key])
+        if axis == "y":
+            fig.add_hline(
+                y=val,
+                line_dash=dash,
+                line_color=color,
+                annotation_text=label,
+            )
+        else:
+            fig.add_vline(
+                x=val,
+                line_dash=dash,
+                line_color=color,
+                annotation_text=label,
+            )
+
+
 def _chart_description(
     chart_type: str,
     variable: str,
@@ -100,28 +128,7 @@ def build_histogram(
         nbins = min(40, max(10, len(work) // 5))
         fig = px.histogram(work, x=variable, nbins=nbins)
         tol = _tolerance(context, intent, variable)
-        if tol:
-            if tol.get("lti") is not None:
-                fig.add_vline(
-                    x=float(tol["lti"]),
-                    line_dash="dash",
-                    line_color="#DC2626",
-                    annotation_text="LTI",
-                )
-            if tol.get("lts") is not None:
-                fig.add_vline(
-                    x=float(tol["lts"]),
-                    line_dash="dash",
-                    line_color="#DC2626",
-                    annotation_text="LTS",
-                )
-            if tol.get("nominal") is not None:
-                fig.add_vline(
-                    x=float(tol["nominal"]),
-                    line_dash="dot",
-                    line_color="#1E3A5F",
-                    annotation_text="Nominal",
-                )
+        _add_tolerance_lines(fig, tol, axis="x")
 
         unit = _unit_label(context, intent, variable)
         fig.update_layout(
@@ -146,11 +153,35 @@ def build_boxplot_chart(
     context: "ClientContext",
     intent: dict,
 ) -> dict:
+    """Boxplot Plotly avec LTI/LTS en lignes horizontales (S4 — sans modifier enterprise/)."""
     try:
+        if variable not in df.columns:
+            return {"error": f"Variable absente : {variable}", "png_bytes": None}
+
         group_col = _resolve_group_column(intent)
+        cols = [variable]
+        if group_col and group_col in df.columns:
+            cols.append(group_col)
+        plot_df = df[cols].dropna(subset=[variable])
+        if plot_df.empty:
+            return {"error": "Aucune donnée pour le boxplot", "png_bytes": None}
+
         unit = _unit_label(context, intent, variable)
-        title = f"Comparaison par {group_col}" if group_col else f"Distribution — {variable}"
-        png = report_charts.build_boxplot(df, variable, group_col, title=title, unit=unit)
+        y_title = f"{variable} ({unit})" if unit else variable
+        if group_col and group_col in plot_df.columns:
+            fig = px.box(plot_df, x=group_col, y=variable, points="outliers")
+            title = f"Comparaison par {group_col} — {variable}"
+        else:
+            fig = px.box(plot_df, y=variable, points="outliers")
+            title = f"Distribution — {variable}"
+
+        _add_tolerance_lines(fig, _tolerance(context, intent, variable), axis="y")
+        fig.update_layout(
+            **report_charts.PLOTLY_THEME,
+            title=title,
+            yaxis_title=y_title,
+        )
+        png = report_charts._fig_to_png(fig, 800, 400)
         return {
             "error": None,
             "png_bytes": png,

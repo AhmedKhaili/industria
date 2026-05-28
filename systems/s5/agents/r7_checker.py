@@ -22,9 +22,12 @@ def run(synthese: str, context: "ClientContext", profile: str) -> dict:
         cfg = prep.profile_config(context, profile)
         tokens_max = int(cfg.get("tokens_max", 250))
         forbidden = [str(w).lower() for w in cfg.get("forbidden_words", [])]
+        internal_terms = prep.synthese_forbidden_terms(context)
 
-        text = synthese
-        warnings: list[str] = []
+        text, internal_warnings = prep.sanitize_synthesis_text(
+            synthese, internal_terms, forbidden
+        )
+        warnings: list[str] = list(internal_warnings)
 
         for word in forbidden:
             if re.search(rf"\b{re.escape(word)}\b", text, re.IGNORECASE):
@@ -32,6 +35,7 @@ def run(synthese: str, context: "ClientContext", profile: str) -> dict:
                 warnings.append(f"Terme interdit retiré pour profil {profile} : {word}")
 
         text = re.sub(r"\s+", " ", text).strip()
+        text = prep.polish_client_text(text)
 
         if _estimate_tokens(text) > tokens_max:
             words = text.split()

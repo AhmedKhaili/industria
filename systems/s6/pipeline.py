@@ -51,7 +51,17 @@ class S6Pipeline:
 
             llm_client.reset_step_stats()
             t0 = time.perf_counter()
-            a1 = a1_dispatcher.run(specialist_results, intent, self.ctx, profile)
+            ranking = s3_output.get("group_ranking") or {}
+            if not ranking:
+                ms = s3_output.get("metrics_summary") or {}
+                ranking = ms.get("group_ranking") if isinstance(ms, dict) else {}
+            a1 = a1_dispatcher.run(
+                specialist_results,
+                intent,
+                self.ctx,
+                profile,
+                group_ranking=ranking,
+            )
             _trace_step(trace, "a1", a1, t0, n_items=len(a1.get("items", [])))
             if a1.get("error"):
                 return self._empty_error(a1["error"], trace)

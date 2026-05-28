@@ -7,6 +7,12 @@ from __future__ import annotations
 import re
 from typing import TYPE_CHECKING, Any
 
+from systems.stats_format import (
+    certified_significance_phrase,
+    format_p_value,
+    strip_bad_p_value_phrases,
+)
+
 if TYPE_CHECKING:
     from systems.s1.client_context import ClientContext
 
@@ -25,6 +31,315 @@ def canonical_agent(agent: str | None) -> str:
     if not agent:
         return ""
     return _AGENT_ALIASES.get(agent, str(agent).strip().lower())
+
+
+_DEFAULT_SYNTHESE_INTERDITS = [
+    "analysis_context",
+    "cpk_summary",
+    "anova_summary",
+    "trend_summary",
+    "descriptions_tabulaires",
+    "specialist_results",
+    "metrics_summary",
+    "pipeline_trace",
+    "intent S1",
+    "intent S0",
+    "YAML client",
+    "YAML",
+    "tableau présente",
+    "pipeline",
+    "fallback",
+    "LLM",
+]
+
+_SYNTHESE_PHRASE_PATTERNS = [
+    re.compile(r"intent\s+S\d", re.I),
+    re.compile(r"YAML\s+client", re.I),
+    re.compile(r"le\s+tableau\s+présente", re.I),
+    re.compile(r"tandis\s+que\s+le\s+confirme", re.I),
+    re.compile(r"données\s+certifiées", re.I),
+    re.compile(r"écart\s+LLM", re.I),
+]
+
+_SPECIALIST_LABELS = {
+    "cp_cpk": "Capabilité processus (Cp/Cpk)",
+    "anova_kruskal": "Comparaison de groupes",
+    "mann_kendall": "Tendance",
+    "zscore": "Anomalies",
+    "spc": "SPC",
+    "ewma_cusum": "Surveillance EWMA/CUSUM",
+    "regression": "Régression",
+    "graphique": "Graphique",
+}
+
+_ISOLATED_SENTENCE_WORD = re.compile(
+    r"^(Le|La|Un|Une|Les|Des|Du|De|L)$",
+    re.IGNORECASE,
+)
+
+_TRAILING_DETERMINER = re.compile(
+    r"\b(?:le|la|les|un|une|des|du|de|l)\s*$",
+    re.IGNORECASE,
+)
+
+# Parenthèses métier valides — ne pas confondre avec « ( Enfin »
+_VALID_OPEN_PAREN = re.compile(
+    r"\(\s*(?:"
+    r"Cpk|Cp|p\s*[<>=]|n\s*=|CR\d|O\d|"
+    r"\d+(?:[.,]\d+)?"
+    r")",
+    re.IGNORECASE,
+)
+
+_DEFECT_FRAGMENT_PATTERNS = [
+    re.compile(r"\(\s+Enfin\b", re.I),
+    re.compile(r",\s*Enfin\s*,\s*le\b", re.I),
+    re.compile(r"\s+Enfin\s*,\s*le\b", re.I),
+    re.compile(r"\ble\s+Enfin\s*,\s*il\b", re.I),
+    re.compile(r"\bLe\s+De\s+plus\s*,\s*le\b", re.I),
+    re.compile(r"\bEnfin\s*,\s*il\s+est\b", re.I),
+    re.compile(r"est,\s*répondant ainsi au seuil EN9100[^.]*\.?", re.I),
+    re.compile(r",\s*répondant ainsi au seuil EN9100[^.]*\.?", re.I),
+    re.compile(
+        r"Les graphiques indiquent que la capabilité sur les \d+ variables est,\s*répondant[^.]*\.?",
+        re.I,
+    ),
+    re.compile(r"Kruskal-Wallis\s*\(\s+Enfin", re.I),
+    re.compile(
+        r"\(\s+(?!p\s*[<>=]|Cpk|Cp\s*=|n\s*=|CR\d|O\d|\d)"
+        r"[A-Za-zÀ-ÿ]",
+        re.I,
+    ),
+]
+
+
+def strip_orphan_parentheses(text: str) -> str:
+    """Nettoie parenthèses orphelines (ex. « CR70, ) »)."""
+    out = str(text or "")
+    out = re.sub(r",\s*\)", ")", out)
+    out = re.sub(r"\(\s*,", "(", out)
+    out = re.sub(r"\(\s*\)", "", out)
+    out = re.sub(r",\s*,", ",", out)
+    out = re.sub(r"\s+,\s*\)", ")", out)
+    out = re.sub(r"\s+,\s*\.", ".", out)
+    return out
+
+
+def _paren_counts_balanced(segment: str) -> bool:
+    return segment.count("(") == segment.count(")")
+
+
+def _has_unclosed_paren(segment: str) -> bool:
+    depth = 0
+    for ch in segment:
+        if ch == "(":
+            depth += 1
+        elif ch == ")":
+            depth -= 1
+            if depth < 0:
+                return True
+    return depth > 0
+
+
+def _earliest_defect_index(text: str) -> int | None:
+    """Position du premier fragment défectueux (tronquer avant)."""
+    s = str(text or "")
+    if not s:
+        return None
+    earliest: int | None = None
+    for pat in _DEFECT_FRAGMENT_PATTERNS:
+        m = pat.search(s)
+        if m:
+            pos = m.start()
+            if earliest is None or pos < earliest:
+                earliest = pos
+    if _has_unclosed_paren(s):
+        depth = 0
+        for i, ch in enumerate(s):
+            if ch == "(":
+                depth += 1
+                if depth == 1 and i > 0:
+                    tail = s[i : i + 12]
+                    if not _VALID_OPEN_PAREN.match(tail):
+                        if earliest is None or i < earliest:
+                            earliest = i
+            elif ch == ")":
+                depth -= 1
+    return earliest
+
+
+def _truncate_to_last_complete_sentence(text: str) -> str:
+    """Garde le texte jusqu'au dernier point/exclamation/interrogation complet."""
+    s = str(text or "").strip()
+    if not s:
+        return ""
+    ends = list(re.finditer(r"[.!?…](?:\s+|$)", s))
+    if ends:
+        return s[: ends[-1].end()].strip()
+    return ""
+
+
+def truncate_defective_tail(text: str) -> str:
+    """
+    Supprime tout fragment après le dernier point valide si défaut détecté.
+    Ne reformule pas — coupe uniquement.
+    """
+    s = str(text or "").strip()
+    if not s:
+        return ""
+    defect_at = _earliest_defect_index(s)
+    if defect_at is not None and defect_at > 0:
+        s = s[:defect_at].rstrip(" ,;:")
+        s = _truncate_to_last_complete_sentence(s)
+    if _TRAILING_DETERMINER.search(s):
+        s = _TRAILING_DETERMINER.sub("", s).strip()
+        s = _truncate_to_last_complete_sentence(s)
+    if _has_unclosed_paren(s) or not _paren_counts_balanced(s):
+        s = _truncate_to_last_complete_sentence(s)
+    return s.strip()
+
+
+def _sentence_is_broken(sentence: str) -> bool:
+    s = sentence.strip()
+    if not s:
+        return True
+    if re.search(r",\s*$", s):
+        return True
+    if re.search(r"\best,\s*\.?\s*$", s, re.IGNORECASE):
+        return True
+    if _earliest_defect_index(s) is not None:
+        return True
+    if _has_unclosed_paren(s) or not _paren_counts_balanced(s):
+        return True
+    if _TRAILING_DETERMINER.search(s):
+        return True
+    if re.search(r"\(\s+Enfin\b", s, re.I):
+        return True
+    if re.search(r",\s*Enfin\s*,\s*le\b", s, re.I):
+        return True
+    if re.search(r"\ble\s+Enfin\b", s, re.I):
+        return True
+    if re.search(r"\bLe\s+De\s+plus\b", s, re.I):
+        return True
+    if re.search(r"\bEnfin\s*,\s*il\b", s, re.I):
+        return True
+    if re.search(r"est,\s*répondant", s, re.I):
+        return True
+    if re.search(r"variables est,\s*répondant", s, re.I):
+        return True
+    words = re.findall(r"[\wÀ-ÿ]+", s)
+    if len(words) == 1 and _ISOLATED_SENTENCE_WORD.match(words[0]):
+        return True
+    return False
+
+
+def strip_broken_sentences(text: str) -> str:
+    """Supprime les phrases cassées — pas de remplacement LLM."""
+    raw = truncate_defective_tail(str(text or ""))
+    if not raw:
+        return ""
+    parts = re.split(r"(?<=[.!?…])\s+", raw)
+    kept = [p.strip() for p in parts if p.strip() and not _sentence_is_broken(p.strip())]
+    out = strip_orphan_parentheses(" ".join(kept).strip())
+    return truncate_defective_tail(out)
+
+
+def polish_client_text(text: str) -> str:
+    """Nettoyage final texte visible PDF client."""
+    out = strip_orphan_parentheses(str(text or ""))
+    out = truncate_defective_tail(out)
+    out = strip_broken_sentences(out)
+    out = re.sub(r"\broot\s+cause\b", "analyse des causes racines", out, flags=re.I)
+    out = re.sub(r"\s{2,}", " ", out).strip()
+    if _TRAILING_DETERMINER.search(out):
+        out = truncate_defective_tail(_TRAILING_DETERMINER.sub("", out).strip())
+    return out
+
+
+def synthese_forbidden_terms(context: "ClientContext") -> list[str]:
+    """Termes techniques internes interdits dans la synthèse PDF (YAML recommandations)."""
+    raw = context.get_recommandations()
+    extra = raw.get("synthese_interdits", []) if isinstance(raw, dict) else []
+    terms = list(_DEFAULT_SYNTHESE_INTERDITS)
+    for t in extra:
+        if t and str(t) not in terms:
+            terms.append(str(t))
+    return terms
+
+
+def specialist_label(specialist: str | None) -> str:
+    key = canonical_agent(specialist) or str(specialist or "").strip().lower()
+    return _SPECIALIST_LABELS.get(key, "Analyse")
+
+
+def sanitize_synthesis_text(
+    text: str,
+    internal_terms: list[str],
+    profile_forbidden: list[str],
+) -> tuple[str, list[str]]:
+    """Retire jargon interne et termes interdits profil."""
+    warnings: list[str] = []
+    out = str(text or "")
+    for term in internal_terms + list(profile_forbidden):
+        t = str(term).strip()
+        if not t:
+            continue
+        pattern = re.compile(rf"\b{re.escape(t)}\b", re.IGNORECASE)
+        if pattern.search(out):
+            warnings.append(f"Terme retiré de la synthèse : {t}")
+            out = pattern.sub("", out)
+    out = strip_bad_p_value_phrases(out)
+    out = polish_client_text(out)
+    for pat in _SYNTHESE_PHRASE_PATTERNS:
+        if pat.search(out):
+            warnings.append(f"Formulation retirée de la synthèse : {pat.pattern}")
+            out = pat.sub("", out)
+    out = re.sub(r"\s{2,}", " ", out).strip()
+    out = re.sub(r"\s+([.,;])", r"\1", out)
+    return out, warnings
+
+
+def certified_phrase_from_results(
+    specialist: str | None,
+    specialist_results: list[dict] | None,
+) -> str | None:
+    """Libellé Python pour R6 — le LLM ne reformule pas la p-value."""
+    agent = canonical_agent(specialist)
+    for row in specialist_results or []:
+        if row.get("status") != "success":
+            continue
+        if canonical_agent(row.get("agent")) != agent:
+            continue
+        payload = row.get("result") or {}
+        if not isinstance(payload, dict):
+            continue
+        if agent == "anova_kruskal":
+            phrase = payload.get("significance_phrase")
+            if phrase:
+                return str(phrase).strip()
+            return certified_significance_phrase(
+                payload.get("p_value"),
+                payload.get("significatif"),
+                methode=str(payload.get("methode_choisie", "Kruskal-Wallis")),
+            )
+    return None
+
+
+def build_synthesis_corpus(
+    interpretations: list[dict],
+    specialist_results: list[dict] | None = None,
+) -> str:
+    """Corpus R6 — libellés métier, pas d'identifiants techniques."""
+    blocks: list[str] = []
+    for it in interpretations:
+        label = specialist_label(it.get("specialist"))
+        cert = certified_phrase_from_results(it.get("specialist"), specialist_results)
+        texte = str(it.get("texte", "") or "").strip()
+        if cert:
+            blocks.append(f"- {label} : {cert}")
+        elif texte:
+            blocks.append(f"- {label} : {texte}")
+    return "\n".join(blocks)
 
 
 _META_CUT_PATTERNS = [
@@ -167,32 +482,47 @@ def format_specialist_prompt(result: dict) -> str:
     lines = [f"Spécialiste : {agent}", "Données certifiées Python (ne modifie aucun chiffre) :"]
 
     if agent == "cp_cpk":
+        interp = p.get("interpretation_Cpk", "")
         lines.extend(
             [
-                f"- Variable : {p.get('colonne', 'N/A')}",
+                f"- Variable / cote : {p.get('colonne', 'N/A')}",
                 f"- Cpk = {p.get('Cpk')}",
                 f"- Cp = {p.get('Cp')}",
                 f"- Conforme EN9100 (seuil Cpk >= 1,33) : {p.get('conforme_EN9100')}",
-                f"- Interprétation : {p.get('interpretation_Cpk', '')}",
+                f"- Diagnostic processus : {interp}",
                 f"- Hors limites % : {p.get('hors_limites_pct')}",
                 f"- n = {p.get('n')}",
             ]
         )
+        lines.append(
+            "\nConsigne métier : explique dispersion, centrage et conformité "
+            "(ex. dispersion excessive, centrage à revoir, procédé sous contrôle). "
+            "Ne te contente pas de recopier Cpk = …"
+        )
     elif agent == "anova_kruskal":
+        phrase = p.get("significance_phrase") or certified_significance_phrase(
+            p.get("p_value"),
+            p.get("significatif"),
+            methode=str(p.get("methode_choisie", "Kruskal-Wallis")),
+        )
         lines.extend(
             [
                 f"- Méthode : {p.get('methode_choisie')}",
-                f"- p-value = {p.get('p_value')}",
+                f"- Libellé certifié (citer tel quel) : {phrase}",
+                f"- Affichage p-value : {p.get('p_value_display', format_p_value(p.get('p_value')))}",
                 f"- Significatif (alpha={p.get('alpha', 0.05)}) : {p.get('significatif')}",
-                f"- Interprétation : {p.get('interpretation', '')}",
             ]
+        )
+        lines.append(
+            "\nConsigne : ne reformule JAMAIS la p-value "
+            "(interdit : « environ 0 », « p = 0,000 », « 0,0000 »)."
         )
     elif agent == "mann_kendall":
         lines.extend(
             [
                 f"- Variable : {p.get('colonne', 'N/A')}",
                 f"- Tendance : {p.get('tendance')}",
-                f"- p-value = {p.get('p_value')}",
+                f"- Affichage p-value : {p.get('p_value_display', format_p_value(p.get('p_value')))}",
                 f"- Pente Sen = {p.get('sen_slope')}",
             ]
         )
@@ -208,14 +538,146 @@ def format_specialist_prompt(result: dict) -> str:
             if isinstance(val, (int, float, str, bool)) or val is None:
                 lines.append(f"- {key} = {val}")
 
-    lines.append(
-        "\nConsigne : rédige 2 à 4 phrases en français, langage clair, "
-        "en citant les chiffres EXACTEMENT comme ci-dessus."
-    )
+    if agent != "cp_cpk":
+        lines.append(
+            "\nConsigne : rédige 2 à 4 phrases en français, langage clair, "
+            "en citant les chiffres EXACTEMENT comme ci-dessus."
+        )
     return "\n".join(lines)
 
 
-def python_fallback_interpretation(result: dict) -> str:
+def friendly_group_label(group_col: str | None, intent: dict | None = None) -> str:
+    """Libellé métier pour la colonne de groupement (pas de Ref_Matrice en client)."""
+    name = str(group_col or "").strip()
+    if name in ("Ref_Matrice", "ref_matrice"):
+        return "matrices"
+    if intent:
+        gb = intent.get("group_by")
+        if gb == "Ref_Matrice" or gb == ["Ref_Matrice"]:
+            return "matrices"
+    return name.replace("_", " ").lower() if name else "groupes"
+
+
+def _dunn_pairs_summary(specialist_results: list[dict] | None, max_pairs: int = 4) -> str:
+    for row in specialist_results or []:
+        if row.get("status") != "success":
+            continue
+        if canonical_agent(row.get("agent")) != "dunn_posthoc":
+            continue
+        paires = (row.get("result") or {}).get("paires_significatives") or []
+        labels: list[str] = []
+        for pair in paires[:max_pairs]:
+            if not isinstance(pair, dict):
+                continue
+            ga = pair.get("groupe_a", "")
+            gb = pair.get("groupe_b", "")
+            if ga and gb:
+                labels.append(f"{ga} vs {gb}")
+        if labels:
+            return ", ".join(labels)
+    return ""
+
+
+def enriched_descriptive_interpretation(result: dict, intent: dict | None = None) -> str:
+    """Fallback portrait descriptif (Python pur, auditable)."""
+    p = result.get("result") or {}
+    col = p.get("colonne", "la mesure")
+    n = p.get("n")
+    moy = p.get("moyenne")
+    med = p.get("mediane")
+    sigma = p.get("ecart_type")
+    pct = p.get("pct_hors_lti_lts")
+    centrage = p.get("centrage")
+    parts = [
+        f"Portrait de {col} (n={n}) : moyenne {moy} mm, médiane {med} mm, "
+        f"écart-type {sigma} mm."
+    ]
+    if pct is not None:
+        parts.append(f"{pct} % des mesures hors tolérances LTI/LTS.")
+    if centrage is not None:
+        parts.append(f"Centrage relatif {centrage} (par rapport au nominal).")
+    disp = p.get("interpretation_dispersion")
+    if disp and disp not in parts[-1]:
+        parts.append(str(disp))
+    _ = intent
+    return polish_client_text(" ".join(parts))
+
+
+def enriched_normality_interpretation(result: dict) -> str:
+    """Fallback normalité — verdict Python uniquement."""
+    p = result.get("result") or {}
+    col = p.get("colonne", "la mesure")
+    phrase = p.get("normalite_phrase") or ""
+    test = p.get("test_utilise", "")
+    n = p.get("n")
+    verdict = p.get("verdict_normalite", "")
+    body = f"Normalité sur {col} (n={n}) : {phrase or verdict}."
+    if test:
+        body += f" Test retenu : {test}."
+    ks_note = p.get("ks_note")
+    if ks_note and n and int(n) >= 5000:
+        pass
+    return polish_client_text(body.strip())
+
+
+def enriched_distribution_fit_interpretation(result: dict) -> str:
+    """Fallback ajustement de loi — jamais « loi probable »."""
+    p = result.get("result") or {}
+    col = p.get("colonne", "la mesure")
+    loi = p.get("loi_retenue") or p.get("loi_candidate_aic")
+    aic = p.get("aic_min")
+    interp = p.get("interpretation_loi") or (
+        f"Meilleur ajustement parmi les lois testées : {loi} (AIC = {aic})"
+        if loi and aic is not None
+        else ""
+    )
+    return polish_client_text(f"Distribution sur {col} : {interp}.")
+
+
+def enriched_anova_interpretation(
+    result: dict,
+    specialist_results: list[dict] | None = None,
+    intent: dict | None = None,
+) -> str:
+    """Interprétation ANOVA/Kruskal complète (fallback R1/R2 — auditable)."""
+    p = result.get("result") or {}
+    methode = str(p.get("methode_choisie", "Kruskal-Wallis"))
+    stat_name = str(p.get("test_stat_name", "H"))
+    stat_val = p.get("test_stat")
+    p_disp = p.get("p_value_display") or format_p_value(p.get("p_value"))
+    phrase = p.get("significance_phrase") or certified_significance_phrase(
+        p.get("p_value"),
+        p.get("significatif"),
+        methode=methode,
+    )
+    group_label = friendly_group_label(p.get("colonne_groupe"), intent)
+    variables = intent.get("variables") if intent else None
+    if variables:
+        vars_clean = [str(v).strip() for v in variables[:5] if v and str(v).strip()]
+        vars_txt = ", ".join(vars_clean[:4])
+        if len(vars_clean) > 4:
+            vars_txt += ", …"
+    else:
+        target = p.get("colonne_cible")
+        vars_txt = str(target) if target else "les variables analysées"
+
+    lead = f"{methode}"
+    if stat_val is not None:
+        lead += f" {stat_name}={stat_val}"
+    body = f"{lead}, {phrase} entre les {group_label} ({vars_txt})."
+    paires = _dunn_pairs_summary(specialist_results)
+    if paires:
+        body += f" Paires significatives (Dunn) : {paires}."
+    elif not p.get("significatif"):
+        body += " Aucune différence significative retenue."
+    return polish_client_text(body.strip())
+
+
+def python_fallback_interpretation(
+    result: dict,
+    specialist_results: list[dict] | None = None,
+    intent: dict | None = None,
+) -> str:
     """Résumé Python si LLM indisponible."""
     agent = canonical_agent(result.get("agent"))
     if result.get("status") != "success":
@@ -227,27 +689,48 @@ def python_fallback_interpretation(result: dict) -> str:
         cpk = p.get("Cpk")
         conforme = p.get("conforme_EN9100")
         col = p.get("colonne", "")
-        verdict = "conforme" if conforme else "non conforme"
-        return (
-            f"Pour {col}, Cpk = {cpk} : pièce {verdict} au regard du seuil EN9100 (Cpk >= 1,33). "
-            f"{p.get('interpretation_Cpk', '')}"
-        )
-    if agent == "anova_kruskal":
-        sig = p.get("significatif")
-        pval = p.get("p_value")
-        if sig:
-            return (
-                f"La comparaison de groupes ({p.get('methode_choisie')}) montre une "
-                f"différence significative (p = {pval})."
+        interp = str(p.get("interpretation_Cpk", "") or "").strip()
+        try:
+            cpk_f = float(cpk)
+        except (TypeError, ValueError):
+            cpk_f = None
+        if cpk_f is not None and cpk_f < 1.0:
+            metier = (
+                f"Sur {col}, la capabilité est critique (Cpk = {cpk}) : "
+                "dispersion et centrage insuffisants — action corrective immédiate."
             )
-        return (
-            f"Aucune différence significative entre groupes "
-            f"({p.get('methode_choisie')}, p = {pval})."
-        )
+        elif cpk_f is not None and cpk_f < 1.33:
+            metier = (
+                f"Sur {col}, le procédé est en limite (Cpk = {cpk}) : "
+                "réduire la dispersion ou recentrer sur la cible nominale."
+            )
+        elif conforme:
+            metier = f"Sur {col}, le procédé est sous contrôle (Cpk = {cpk})."
+        else:
+            metier = f"Sur {col}, Cpk = {cpk} : conformité EN9100 à confirmer."
+        if interp and interp.lower() not in metier.lower():
+            metier = f"{metier} {interp}"
+        return metier.strip()
+    if agent == "dunn_posthoc":
+        paires = p.get("paires_significatives") or []
+        if not paires:
+            return p.get("interpretation", "Aucune paire significative au post-hoc Dunn.")
+        top = paires[:3]
+        parts = [x.get("libelle", "") for x in top if x.get("libelle")]
+        return " ".join(parts) + (f" (+{len(paires) - len(top)} autre(s) paire(s))" if len(paires) > len(top) else "")
+    if agent == "anova_kruskal":
+        return enriched_anova_interpretation(result, specialist_results, intent)
+    if agent == "descriptive":
+        return enriched_descriptive_interpretation(result, intent)
+    if agent == "normality":
+        return enriched_normality_interpretation(result)
+    if agent == "distribution_fit":
+        return enriched_distribution_fit_interpretation(result)
     if agent == "mann_kendall":
+        p_disp = p.get("p_value_display") or format_p_value(p.get("p_value"))
         return (
             f"Tendance sur {p.get('colonne')} : {p.get('tendance')} "
-            f"(p = {p.get('p_value')}, pente Sen = {p.get('sen_slope')})."
+            f"({p_disp}, pente Sen = {p.get('sen_slope')})."
         )
     return f"Résultat {agent} : " + ", ".join(
         f"{k}={v}" for k, v in list(p.items())[:6] if isinstance(v, (int, float, str))

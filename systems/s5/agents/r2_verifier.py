@@ -9,7 +9,11 @@ import re
 from systems.s5 import llm_client, prep
 
 
-def run(interpretations: list[dict]) -> dict:
+def run(
+    interpretations: list[dict],
+    specialist_results: list[dict] | None = None,
+    intent: dict | None = None,
+) -> dict:
     try:
         verified: list[dict] = []
         for item in interpretations:
@@ -36,7 +40,9 @@ def run(interpretations: list[dict]) -> dict:
                     worst = "Review"
 
             if worst == "Reject":
-                entry["texte"] = prep.python_fallback_interpretation(result)
+                entry["texte"] = prep.python_fallback_interpretation(
+                    result, specialist_results, intent
+                )
                 entry["statut"] = "reject"
                 if reject_motif:
                     entry["motif_reject"] = reject_motif

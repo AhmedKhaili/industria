@@ -4,11 +4,15 @@ Sélection des spécialistes selon l'intention S1.
 
 from __future__ import annotations
 
+_PORTRAIT_SPECIALISTS = ["descriptive", "normality", "distribution_fit"]
+
 INTENTION_SPECIALISTS: dict[str, list[str]] = {
     "conformite": ["cp_cpk", "zscore", "spc"],
     "comparaison_groupes": ["anova_kruskal", "cp_cpk"],
     "tendance": ["mann_kendall", "ewma_cusum", "regression"],
     "anomalie": ["zscore", "spc", "ewma_cusum"],
+    "portrait_statistique": list(_PORTRAIT_SPECIALISTS),
+    "analyse_complete": list(_PORTRAIT_SPECIALISTS) + ["correlation"],
 }
 
 

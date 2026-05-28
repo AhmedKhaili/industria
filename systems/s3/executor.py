@@ -9,6 +9,11 @@ from typing import TYPE_CHECKING, Any
 import pandas as pd
 
 from specialists.anova_kruskal import AnovaKruskalSpecialist
+from specialists.correlation import CorrelationSpecialist
+from specialists.descriptive import DescriptiveSpecialist
+from specialists.distribution_fit import DistributionFitSpecialist
+from specialists.normality import NormalitySpecialist
+from specialists.dunn_posthoc import DunnPosthocSpecialist
 from specialists.cp_cpk import CpCpkSpecialist
 from specialists.ewma_cusum import EwmaCusumSpecialist
 from specialists.mann_kendall import MannKendallSpecialist
@@ -29,7 +34,52 @@ _SPECIALIST_CLASSES = {
     "mann_kendall": MannKendallSpecialist,
     "ewma_cusum": EwmaCusumSpecialist,
     "regression": RegressionSpecialist,
+    "dunn_posthoc": DunnPosthocSpecialist,
+    "correlation": CorrelationSpecialist,
+    "descriptive": DescriptiveSpecialist,
+    "normality": NormalitySpecialist,
+    "distribution_fit": DistributionFitSpecialist,
 }
+
+_PORTRAIT_AGENTS = frozenset({"descriptive", "normality", "distribution_fit"})
+
+
+def _append_dunn_if_anova_significant(
+    df: pd.DataFrame,
+    intent: dict,
+    context: "ClientContext",
+    results: list[dict],
+) -> list[dict]:
+    """Exécute Dunn post-hoc si un résultat anova_kruskal est significatif."""
+    for item in results:
+        if item.get("agent") != "anova_kruskal" or item.get("status") != "success":
+            continue
+        payload = item.get("result") or {}
+        if not payload.get("significatif"):
+            continue
+        target = payload.get("colonne_cible") or payload.get("target_column")
+        group_col = payload.get("colonne_groupe") or _resolve_group_column(intent)
+        if not target or not group_col:
+            continue
+        params = {
+            "group_column": group_col,
+            "alpha": payload.get("alpha", 0.05),
+        }
+        dunn = _run_one(
+            "dunn_posthoc",
+            df,
+            intent,
+            context,
+            str(target),
+            extra_params={
+                "group_column": group_col,
+                "alpha": payload.get("alpha", 0.05),
+            },
+        )
+        dunn["agent"] = "dunn_posthoc"
+        results.append(dunn)
+        break
+    return results
 
 
 def _skipped(agent: str, reason: str) -> dict:
@@ -142,6 +192,7 @@ def _run_one(
     intent: dict,
     context: "ClientContext",
     target_column: str,
+    extra_params: dict | None = None,
 ) -> dict:
     work_df = _df_for_target(df, target_column)
     if work_df.empty:
@@ -167,15 +218,25 @@ def _run_one(
         }
 
     params: dict[str, Any] = {"target_column": target_column}
-    if agent == "cp_cpk":
+    if agent in ("cp_cpk", "descriptive"):
         piece, operation = _resolve_piece_operation(intent)
         tol_params = _tolerance_params(context, piece, operation, target_column)
         if tol_params:
             params.update(tol_params)
+            if agent == "descriptive":
+                params["lti"] = tol_params["LSL"]
+                params["lts"] = tol_params["USL"]
+                params["nominal"] = tol_params["target"]
     if agent == "anova_kruskal":
         group_col = _resolve_group_column(intent)
         if group_col:
             params["group_column"] = group_col
+    if agent == "dunn_posthoc":
+        group_col = (extra_params or {}).get("group_column") or _resolve_group_column(intent)
+        if group_col:
+            params["group_column"] = group_col
+        if extra_params:
+            params.update(extra_params)
 
     specialist = cls()
     raw = specialist.run(work_df, _build_state(intent, target_column), params)
@@ -201,7 +262,15 @@ def run_all(
             }
 
         results: list[dict] = []
-        multi_target = {"cp_cpk", "zscore", "spc", "mann_kendall", "ewma_cusum", "regression"}
+        multi_target = {
+            "cp_cpk",
+            "zscore",
+            "spc",
+            "mann_kendall",
+            "ewma_cusum",
+            "regression",
+            "correlation",
+        } | set(_PORTRAIT_AGENTS)
         single_target = {"anova_kruskal"}
 
         for agent in specialists:
@@ -222,6 +291,7 @@ def run_all(
                     }
                 )
 
+        results = _append_dunn_if_anova_significant(df, intent, context, results)
         return {"error": None, "specialist_results": results}
     except Exception as exc:  # noqa: BLE001
         return {"error": str(exc), "specialist_results": []}

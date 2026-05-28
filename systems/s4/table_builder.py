@@ -8,6 +8,8 @@ from typing import TYPE_CHECKING, Any
 
 from enterprise.report.formatters import format_bool, format_number
 
+from systems.stats_format import format_p_value
+
 if TYPE_CHECKING:
     from systems.s1.client_context import ClientContext
 
@@ -72,13 +74,13 @@ def _anova_table(specialist_results: list[dict]) -> dict | None:
                 [
                     payload.get("methode_choisie", "N/A"),
                     format_number(payload.get("test_stat"), 4),
-                    format_number(payload.get("p_value"), 4),
+                    format_p_value(payload.get("p_value")),
                     format_bool(payload.get("significatif")),
                 ]
             ],
             "description": (
                 f"Test {payload.get('methode_choisie', 'N/A')} : "
-                f"p={format_number(payload.get('p_value'), 4)}, "
+                f"{format_p_value(payload.get('p_value'))}, "
                 f"différence {'significative' if payload.get('significatif') else 'non significative'}."
             ),
         }
@@ -97,7 +99,7 @@ def _trend_table(specialist_results: list[dict]) -> dict:
             [
                 payload.get("colonne", "?"),
                 payload.get("tendance", "N/A"),
-                format_number(payload.get("p_value"), 4),
+                format_p_value(payload.get("p_value")),
                 format_number(payload.get("sen_slope"), 6),
             ]
         )
@@ -110,6 +112,19 @@ def _trend_table(specialist_results: list[dict]) -> dict:
         "rows": rows,
         "description": f"Tendance évaluée sur {len(rows)} variable(s).",
     }
+
+
+def _group_by_label(intent: dict) -> str:
+    gb = intent.get("group_by")
+    if gb in ("Ref_Matrice", ["Ref_Matrice"]):
+        return "Matrice (référence outillage)"
+    if isinstance(gb, list):
+        parts = [
+            "Matrice (référence outillage)" if g == "Ref_Matrice" else str(g)
+            for g in gb
+        ]
+        return ", ".join(parts)
+    return str(gb) if gb else "N/A"
 
 
 def _intent_context_table(intent: dict, context: "ClientContext") -> dict:
@@ -129,9 +144,9 @@ def _intent_context_table(intent: dict, context: "ClientContext") -> dict:
             ["Pièce", piece or "N/A"],
             ["Opération", operation or "N/A"],
             ["Variables", ", ".join(str(v) for v in variables[:12]) or "N/A"],
-            ["Groupement", str(intent.get("group_by") or "N/A")],
+            ["Groupement", _group_by_label(intent)],
         ],
-        "description": "Contexte issu de l'intent S1 et du YAML client.",
+        "description": "Contexte de l'analyse (pièce, opération, variables, groupement).",
     }
 
 

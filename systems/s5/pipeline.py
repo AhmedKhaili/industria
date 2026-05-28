@@ -52,7 +52,7 @@ class S5Pipeline:
 
             llm_client.reset_step_stats()
             t0 = time.perf_counter()
-            r1 = r1_interpreter.run(specialist_results)
+            r1 = r1_interpreter.run(specialist_results, intent)
             _trace_step(
                 trace,
                 "r1",
@@ -66,7 +66,9 @@ class S5Pipeline:
                 return self._empty_error(r1["error"], trace)
 
             t0 = time.perf_counter()
-            r2 = r2_verifier.run(r1["interpretations"])
+            r2 = r2_verifier.run(
+                r1["interpretations"], specialist_results, intent
+            )
             _trace_step(trace, "r2", r2, t0)
 
             if r2.get("error"):
@@ -110,7 +112,13 @@ class S5Pipeline:
             interpretations = list(r5["interpretations"])
 
             t0 = time.perf_counter()
-            r6 = r6_synthesizer.run(interpretations, self.ctx, profile, intent)
+            r6 = r6_synthesizer.run(
+                interpretations,
+                self.ctx,
+                profile,
+                intent,
+                specialist_results=specialist_results,
+            )
             _trace_step(trace, "r6", r6, t0, llm_used=bool(r6.get("llm_used", False)))
             if r6.get("error"):
                 return self._empty_error(r6["error"], trace)

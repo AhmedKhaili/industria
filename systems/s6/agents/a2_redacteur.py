@@ -23,6 +23,7 @@ def run(items: list[dict]) -> dict:
         for item in items:
             if not item.get("action"):
                 item["action"] = _template_action(item)
+            item["action"] = _normalize_action_wording(item.get("action", ""))
 
         return {"error": None, "items": items}
     except Exception as exc:  # noqa: BLE001
@@ -36,11 +37,12 @@ def _template_action(item: dict) -> str:
     rag = ""
     if item.get("rag_excerpt"):
         rag = f" Référence procédure : {item['rag_excerpt'][:200]}."
-    return (
+    raw = (
         f"[{item['priorite']}] {item['action_type'].replace('_', ' ')} — "
         f"{item['cause_label']}. {item['justification']} "
         f"Responsable : {item['responsable']}. Délai : {item['delai']}.{rag}"
     )
+    return _normalize_action_wording(raw)
 
 
 def _batch_redact(items: list[dict]) -> None:
@@ -55,7 +57,9 @@ def _batch_redact(items: list[dict]) -> None:
     )
     prompt = (
         "Tu rédiges des recommandations d'action pour l'industrie (qualité EN9100).\n"
-        "Ne modifie aucun chiffre. Une ligne par numéro, format strict :\n"
+        "Ne modifie aucun chiffre. Rédige en français : n'utilise jamais « root cause » ; "
+        "dis « analyse des causes racines ».\n"
+        "Une ligne par numéro, format strict :\n"
         "1. <action impérative courte>\n\n"
         f"{numbered}\n\n"
         "Actions :"
@@ -65,11 +69,17 @@ def _batch_redact(items: list[dict]) -> None:
         parsed = _parse_numbered(texte, len(items))
         if parsed and all(parsed):
             for i, it in enumerate(items):
-                it["action"] = parsed[i]
+                it["action"] = _normalize_action_wording(parsed[i])
             return
 
     for it in items:
         it["action"] = _template_action(it)
+
+
+def _normalize_action_wording(text: str) -> str:
+    out = str(text or "")
+    out = re.sub(r"\broot\s+cause\b", "analyse des causes racines", out, flags=re.I)
+    return out.strip()
 
 
 def _parse_numbered(text: str, expected: int) -> list[str | None]:

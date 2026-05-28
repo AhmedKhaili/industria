@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Callable
 
 from systems.s1.client_context import ClientContext
 from systems.s7 import prep
+from systems.s7 import quality_gate
 from systems.s7.agents import a1_assembler, a2_renderer, a3_signer, a4_validator
 from systems.s7.document import ReportDocument
 from systems.s7.report_port import render_pdf as default_render_pdf
@@ -76,6 +77,29 @@ class S7Pipeline:
                 return self._empty_error(a1.get("error") or "Assemblage échoué", trace)
 
             document: ReportDocument = a1["document"]
+
+            t0 = time.perf_counter()
+            qg = quality_gate.run(
+                question_originale,
+                intent,
+                s3_output,
+                s5_output,
+                s6_output,
+                document,
+                profile,
+                cfg,
+            )
+            _trace_step(
+                trace,
+                "quality_gate",
+                {"error": None if qg.get("publishable") else "blocked"},
+                t0,
+                blocking=len(qg.get("blocking") or []),
+            )
+            if qg.get("blocking"):
+                msg = "QualityGate : " + "; ".join(qg["blocking"])
+                warnings.extend(qg.get("warnings", []))
+                return self._empty_error(msg, trace, warnings)
 
             t0 = time.perf_counter()
             a4 = a4_validator.run(document, self.ctx, profile, s3_output, s6_output)
