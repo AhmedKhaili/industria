@@ -190,6 +190,16 @@ class ClientContext:
             return [t for t in all_tags if re.search(regex, t)]
         return [t for t in all_tags if fnmatch.fnmatch(t, pattern)]
 
+    def get_analyse_etendue(self) -> dict:
+        """Section YAML analyse_etendue — plafonds S3/S5 (S3-extended §5)."""
+        raw = self.raw.get("analyse_etendue", {})
+        return raw if isinstance(raw, dict) else {}
+
+    def get_synthese_s5_config(self) -> dict:
+        """Règles S5 — avertissement multi-variables, zero_llm_synthese opt-in."""
+        cfg = self.get_analyse_etendue().get("synthese_s5", {})
+        return cfg if isinstance(cfg, dict) else {}
+
     def get_recommandations(self) -> dict:
         """Section YAML recommandations (S6) — seuils, délais, responsables."""
         return self.recommandations if isinstance(self.recommandations, dict) else {}

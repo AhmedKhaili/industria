@@ -67,7 +67,15 @@ dataset:
       - '\b(M[A-Z0-9]{3,}|RD[A-Z0-9]{3,})\b'
     operations_synonymes:
       FILAGE: [filage, lfilage, au filage]
-      EQUATOR: [equator, lequator, à l equator, a l equator]
+      EQUATOR:
+        - equator
+        - lequator
+        - à l equator
+        - a l equator
+        - formage
+        - au formage
+        - profil formage
+        - contrôle formage
 
   # Numero Machine = presse si FILAGE, four si EQUATOR
   machine_sens_par_operation:
@@ -187,7 +195,13 @@ entites:
         description: "forme géométrique de l'intrados de l'aube mesurée à différentes sections de corde lors du contrôle EQUATOR"
         pattern_tag: "*_INTRADOS_FORME"
         unite: "mm"
-        synonymes: [profil, géométrie, forme intrados, profil intrados, forme de l'aube]
+        synonymes:
+          - profil
+          - géométrie
+          - forme intrados
+          - intrados forme
+          - profil intrados
+          - forme de l'aube
       vrillage:
         description: "vrillage ou torsion angulaire de l'aube mesurée lors du contrôle EQUATOR"
         pattern_tag: "*_INTRADOS_VRILLAGE"
@@ -256,6 +270,59 @@ entites:
         - "anormal"
         - "pic"
         - "valeur extrême"
+
+    portrait_statistique:
+      description: "portrait descriptif, normalité et ajustement de loi sur une ou plusieurs mesures"
+      priorite: 80
+      dispatcher_s3: [descriptive, normality, distribution_fit]
+      synonymes:
+        - "analyse"
+        - "analyse-moi"
+        - "analyse moi"
+        - "portrait"
+        - "portrait statistique"
+        - "normale"
+        - "loi normale"
+        - "distribution"
+        - "comment est distribuée"
+        - "décris"
+        - "décrire"
+        - "statistiques de"
+        - "caractérise"
+        - "caractériser"
+
+    diagnostic_causal:
+      description: "facteurs associés à la variabilité — associations statistiques, pas causalité prouvée"
+      priorite: 90
+      dispatcher_s3: [anova_kruskal, dunn_posthoc]
+      synonymes:
+        - "influencent"
+        - "influencent la"
+        - "facteurs"
+        - "quel facteur"
+        - "quels facteurs"
+        - "explique"
+        - "expliquent"
+        - "variance"
+        - "pourquoi"
+        - "ce qui impacte"
+        - "ce qui dégrade"
+        - "associés à"
+        - "associé à"
+
+    analyse_complete:
+      description: "bilan analytique complet — portrait, corrélation, capabilité et comparaison si facteur"
+      priorite: 100
+      dispatcher_s3: [descriptive, normality, distribution_fit, correlation, cp_cpk, anova_kruskal]
+      synonymes:
+        - "analyse complète"
+        - "analyse complete"
+        - "bilan complet"
+        - "bilan qualité complet"
+        - "tout sur"
+        - "portrait complet"
+        - "analyse totale"
+        - "analyse globale"
 
 # ============================================================
 # PIECES — hiérarchie industrielle avec tolérances complètes
@@ -794,6 +861,24 @@ contrat_rapport:
     P2: {max_pages: 3,  titre: "Intervention urgente"}
     P3: {max_pages: 10, titre: "Surveillance recommandée"}
     P4: {max_pages: 10, titre: "Rapport d'analyse"}
+
+# ============================================================
+# ANALYSE ÉTENDUE — plafonds S3/S5 (S3-extended §5)
+# ============================================================
+
+analyse_etendue:
+  portrait_statistique:
+    max_variables: 3
+    max_specialistes_par_variable: 3
+  analyse_complete:
+    max_variables: 5
+    max_specialistes_total: 8
+    max_specialistes_par_variable: 3
+    inclure_cp_cpk: true
+    inclure_comparaison_groupes: true
+  synthese_s5:
+    avertissement_si_variables_gt: 3
+    zero_llm_synthese: false
 
 # ============================================================
 # RECOMMANDATIONS S6 — priorités, délais, responsables

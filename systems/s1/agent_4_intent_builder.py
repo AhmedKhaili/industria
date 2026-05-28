@@ -21,17 +21,10 @@ from systems.s1.parsing import S1Parsing
 if TYPE_CHECKING:
     from systems.s1.client_context import ClientContext
 
-_IMPACT_KEYWORDS = (
-    "impact",
-    "influence",
-    "qui",
-    "lequel",
-    "meilleur",
-    "moins bon",
-    "versus",
-    "entre",
-    "comparer",
-)
+_RE_WORD_IMPACT = re.compile(r"\b(impact|influence)\b")
+_RE_WORD_COMPARE = re.compile(r"\b(compare|comparer|comparaison|versus|entre)\b")
+_RE_WORD_CAUSENT = re.compile(r"\bcausent?\b")
+_INTENTION_LEXICAL_MIN = 0.68
 _GROUPING_PHRASES = (
     "par machine",
     "par fournisseur",
@@ -59,10 +52,7 @@ _VAGUE_PHRASES = (
     "dit moi tout",
     "parle moi de",
     "explique moi",
-    "tout sur le",
-    "tout sur la",
 )
-_RE_COMPARE = re.compile(r"\b(compare|comparer|comparaison)\b")
 
 
 class Agent4IntentBuilder:
@@ -242,9 +232,66 @@ class Agent4IntentBuilder:
     def _is_piece_only_question(question: str, context: "ClientContext") -> bool:
         return Agent4IntentBuilder._parsing(context).is_piece_only(question)
 
+    def _intention_terms(self, intent_key: str, context: "ClientContext") -> list[str]:
+        cfg = context.entites_intentions.get(intent_key, {})
+        terms = [intent_key.replace("_", " ")]
+        terms.extend(str(s) for s in cfg.get("synonymes", []) if s)
+        return terms
+
+    def _score_intention_yaml(
+        self, question: str, context: "ClientContext"
+    ) -> list[tuple[str, float, int, int]]:
+        """(intent_key, score, longest_synonym_len, priorite_yaml) triés par pertinence."""
+        ranked: list[tuple[str, float, int, int]] = []
+        for key, cfg in context.entites_intentions.items():
+            priorite = int(cfg.get("priorite", 50))
+            best_score = 0.0
+            best_len = 0
+            for term in self._intention_terms(key, context):
+                t = term.strip().lower()
+                if len(t) < 3:
+                    continue
+                sc = self._term_lexical_score(t, question)
+                if sc > best_score or (sc == best_score and len(t) > best_len):
+                    best_score = sc
+                    best_len = len(t)
+            if best_score >= _INTENTION_LEXICAL_MIN:
+                ranked.append((key, best_score, best_len, priorite))
+        ranked.sort(key=lambda x: (x[3], x[1], x[2]), reverse=True)
+        return ranked
+
+    def _resolve_intention(
+        self,
+        question: str,
+        entities: dict,
+        resolutions: dict,
+        context: "ClientContext",
+        *,
+        piece_only: bool,
+    ) -> str | None:
+        if piece_only:
+            return None
+        if _RE_WORD_CAUSENT.search(question):
+            return "diagnostic_causal"
+
+        yaml_ranked = self._score_intention_yaml(question, context)
+        if yaml_ranked:
+            return yaml_ranked[0][0]
+
+        intention, intention_score = self._pick_best(
+            entities.get("intentions_candidates", []),
+            resolutions,
+            "intention",
+            value_field="key",
+        )
+        if intention and intention_score >= THRESHOLD_AMBIGUOUS:
+            return intention
+
+        return self._intention_from_keywords(question)
+
     @staticmethod
     def _intention_from_keywords(question: str) -> str | None:
-        if _RE_COMPARE.search(question):
+        if _RE_WORD_COMPARE.search(question):
             return "comparaison_groupes"
         if any(w in question for w in _CONFORMITE_WORDS):
             return "conformite"
@@ -252,7 +299,7 @@ class Agent4IntentBuilder:
             return "tendance"
         if any(w in question for w in _ANOMALIE_WORDS):
             return "anomalie"
-        if any(k in question for k in _IMPACT_KEYWORDS):
+        if _RE_WORD_IMPACT.search(question):
             return "comparaison_groupes"
         if any(p in question for p in _GROUPING_PHRASES):
             return "comparaison_groupes"
@@ -294,7 +341,11 @@ class Agent4IntentBuilder:
     def _intention_explicit_in_question(
         self, question: str, entities: dict, resolutions: dict, context: "ClientContext"
     ) -> bool:
-        if _RE_COMPARE.search(question):
+        if self._score_intention_yaml(question, context):
+            return True
+        if _RE_WORD_COMPARE.search(question):
+            return True
+        if _RE_WORD_CAUSENT.search(question):
             return True
         if any(w in question for w in _CONFORMITE_WORDS):
             return True
@@ -302,7 +353,7 @@ class Agent4IntentBuilder:
             return True
         if any(w in question for w in _ANOMALIE_WORDS):
             return True
-        if any(k in question for k in _IMPACT_KEYWORDS):
+        if _RE_WORD_IMPACT.search(question):
             return True
         if any(p in question for p in _GROUPING_PHRASES):
             return True
@@ -407,22 +458,18 @@ class Agent4IntentBuilder:
 
         has_anchor = self._has_industrial_anchor(question, context)
 
-        intention: str | None = None
-        if not piece_only:
-            if self._intention_explicit_in_question(
-                question, entities, resolutions, context
-            ):
-                intention, intention_score = self._pick_best(
-                    entities.get("intentions_candidates", []),
-                    resolutions,
-                    "intention",
-                    value_field="key",
-                )
-                if intention_score < THRESHOLD_AMBIGUOUS:
-                    intention = None
-            intention = intention or self._intention_from_keywords(question)
+        intention: str | None = self._resolve_intention(
+            question,
+            entities,
+            resolutions,
+            context,
+            piece_only=piece_only,
+        )
 
-        if any(v in question for v in _VAGUE_PHRASES):
+        if any(v in question for v in _VAGUE_PHRASES) and intention not in (
+            "analyse_complete",
+            "portrait_statistique",
+        ):
             intention = None
 
         if piece_only:
@@ -486,10 +533,14 @@ class Agent4IntentBuilder:
         if len(explicit_facteurs) > 1 and not multi_facteur_q:
             explicit_facteurs = [max(explicit_facteurs, key=lambda x: x[2])]
 
-        wants_group_by = intention == "comparaison_groupes" and (
+        wants_group_by = intention in (
+            "comparaison_groupes",
+            "diagnostic_causal",
+        ) and (
             bool(explicit_facteurs)
             or any(p in question for p in _GROUPING_PHRASES)
             or multi_facteur_q
+            or intention == "diagnostic_causal"
         )
 
         if wants_group_by:
@@ -506,6 +557,25 @@ class Agent4IntentBuilder:
                 group_by = list(dict.fromkeys(facteur_cols))
             elif len(facteur_cols) == 1:
                 group_by = facteur_cols[0]
+
+        if (
+            intention == "diagnostic_causal"
+            and not group_by
+            and operation == "EQUATOR"
+            and (
+                self._variable_group_explicit("forme", question, context, "EQUATOR")
+                or self._variable_group_explicit("veine", question, context, "EQUATOR")
+            )
+        ):
+            group_by = context.colonnes.get("matrice", "Ref_Matrice")
+
+        if (
+            intention == "diagnostic_causal"
+            and not group_by
+            and piece_for_vars
+            and operation
+        ):
+            group_by = context.get_group_by_defaut(piece_for_vars, operation)
 
         # Filtres
         filtres: dict = {}
@@ -579,4 +649,16 @@ class Agent4IntentBuilder:
         }
         if piece_inconnue is not None:
             result["piece_inconnue"] = piece_inconnue
+        self._assert_intent_language(result)
         return result
+
+    @staticmethod
+    def _assert_intent_language(intent: dict) -> None:
+        """Interdit « causent » dans les valeurs texte de l'intent (PHILOSOPHY §28)."""
+        for val in intent.values():
+            if isinstance(val, str) and "causent" in val.lower():
+                raise ValueError("Intent interdit : formulation causale")
+            if isinstance(val, list):
+                for item in val:
+                    if isinstance(item, str) and "causent" in item.lower():
+                        raise ValueError("Intent interdit : formulation causale")

@@ -41,6 +41,67 @@ def format_p_value(p: Any) -> str:
     return f"p = {formatted}"
 
 
+_LOI_DISPLAY: dict[str, str] = {
+    "normale": "normale",
+    "log_normale": "log-normale",
+    "weibull": "Weibull",
+    "exponentielle": "exponentielle",
+    "uniforme": "uniforme",
+}
+
+_FORBIDDEN_LOI_WORDING = (
+    "loi probable",
+    "loi possible",
+    "distribution probable",
+    "distribution possible",
+)
+
+
+def certified_normalite_phrase(
+    verdict: str | None,
+    test: str | None,
+    stat: Any = None,
+    p: Any = None,
+    *,
+    p_value_display: str | None = None,
+) -> str:
+    """
+    Libellé certifié normalité — jamais « loi probable ».
+    Ex. normale (Shapiro-Wilk, p = 0,023) / non normale (Anderson-Darling, p < 0,001).
+    """
+    v = str(verdict or "").strip().lower()
+    test_name = str(test or "test de normalité").strip()
+    p_txt = p_value_display or format_p_value(p)
+    if v == "normale":
+        if p_txt in ("N/A", "") and stat is not None:
+            return f"normale ({test_name}, statistique = {stat})"
+        return f"normale ({test_name}, {p_txt})"
+    if v == "non_normale":
+        if p_txt in ("N/A", "") and stat is not None:
+            return f"non normale ({test_name}, statistique = {stat})"
+        return f"non normale ({test_name}, {p_txt})"
+    return f"verdict {v or 'indéterminé'} ({test_name})"
+
+
+def certified_loi_candidate_phrase(loi: str | None, aic: Any = None) -> str:
+    """Meilleur ajustement selon AIC — jamais « loi probable »."""
+    if not loi:
+        return "ajustement de loi non disponible"
+    label = _LOI_DISPLAY.get(str(loi), str(loi).replace("_", "-"))
+    if aic is not None:
+        try:
+            aic_f = float(aic)
+            return f"meilleur ajustement selon AIC : loi {label} (AIC = {aic_f:.3f})"
+        except (TypeError, ValueError):
+            pass
+    return f"meilleur ajustement selon AIC : loi {label}"
+
+
+def contains_forbidden_loi_wording(text: str) -> bool:
+    low = str(text or "").lower()
+    return any(p in low for p in _FORBIDDEN_LOI_WORDING)
+
+
 def certified_significance_phrase(
     p_value: Any,
     significatif: bool | None,
@@ -73,9 +134,21 @@ def enrich_specialist_results_display(specialist_results: list[dict]) -> list[di
                     payload.get("significatif"),
                     methode=str(payload.get("methode_choisie", "Kruskal-Wallis")),
                 )
-        if agent == "normality" and "p_value" in payload:
-            if "p_value_display" not in payload:
+        if agent == "normality":
+            if "p_value" in payload and "p_value_display" not in payload:
                 payload["p_value_display"] = format_p_value(payload["p_value"])
+            payload["normalite_phrase"] = certified_normalite_phrase(
+                payload.get("verdict_normalite"),
+                payload.get("test_utilise"),
+                payload.get("statistique"),
+                payload.get("p_value"),
+                p_value_display=payload.get("p_value_display"),
+            )
+        if agent == "distribution_fit":
+            loi = payload.get("loi_retenue") or payload.get("loi_candidate_aic")
+            phrase = certified_loi_candidate_phrase(loi, payload.get("aic_min"))
+            payload["interpretation_loi"] = phrase
+            payload["libelle_client"] = "meilleur ajustement selon AIC/BIC"
         if agent == "dunn_posthoc":
             paires = payload.get("paires_significatives") or []
             for pair in paires:

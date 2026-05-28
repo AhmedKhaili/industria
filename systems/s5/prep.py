@@ -8,6 +8,8 @@ import re
 from typing import TYPE_CHECKING, Any
 
 from systems.stats_format import (
+    certified_loi_candidate_phrase,
+    certified_normalite_phrase,
     certified_significance_phrase,
     format_p_value,
     strip_bad_p_value_phrases,
@@ -436,6 +438,35 @@ def descriptions_list(s4_output: dict) -> list[str]:
     return items
 
 
+_R2_NUMERIC_KEYS: dict[str, tuple[str, ...]] = {
+    "descriptive": (
+        "moyenne",
+        "mediane",
+        "ecart_type",
+        "variance",
+        "skewness",
+        "kurtosis",
+        "min",
+        "max",
+        "q1",
+        "q3",
+        "iqr",
+        "pct_hors_lti_lts",
+        "centrage",
+    ),
+    "normality": ("statistique", "shapiro_stat", "shapiro_p", "ad_stat", "ks_stat", "ks_p", "p_value"),
+    "distribution_fit": ("aic_min", "bic_min"),
+}
+
+_LOI_SYNONYMS: dict[str, tuple[str, ...]] = {
+    "normale": ("normale", "gaussienne", "gaussien"),
+    "log_normale": ("log-normale", "log normale", "lognormale", "log normale"),
+    "weibull": ("weibull",),
+    "exponentielle": ("exponentielle", "exponential"),
+    "uniforme": ("uniforme", "uniform"),
+}
+
+
 def flatten_numbers(obj: Any, prefix: str = "") -> list[tuple[str, float]]:
     out: list[tuple[str, float]] = []
     if isinstance(obj, dict):
@@ -454,16 +485,147 @@ def flatten_numbers(obj: Any, prefix: str = "") -> list[tuple[str, float]]:
 
 
 def reference_numbers_for_result(result: dict) -> dict[str, float]:
-    """Nombres de référence pour un résultat spécialiste."""
+    """Nombres de référence pour un résultat spécialiste (champs P3 R2)."""
     refs: dict[str, float] = {}
     payload = result.get("result") or {}
     if not isinstance(payload, dict):
         return refs
     agent = canonical_agent(result.get("agent"))
+    allowed = _R2_NUMERIC_KEYS.get(agent)
+    if allowed:
+        for key in allowed:
+            val = payload.get(key)
+            if isinstance(val, (int, float)) and not isinstance(val, bool):
+                try:
+                    fval = float(val)
+                    refs[f"{agent}.{key}"] = fval
+                    refs[key] = fval
+                except (TypeError, ValueError):
+                    pass
+        return refs
     for key, val in flatten_numbers(payload):
         refs[f"{agent}.{key}"] = val
         refs[key.split(".")[-1]] = val
     return refs
+
+
+def _laws_mentioned_in_text(text: str) -> set[str]:
+    low = str(text or "").lower()
+    found: set[str] = set()
+    for loi_id, patterns in _LOI_SYNONYMS.items():
+        if any(p in low for p in patterns):
+            found.add(loi_id)
+    return found
+
+
+def verify_r2_qualitative(text: str, result: dict) -> str | None:
+    """
+    Vérifications qualitatives R2 (P3).
+    Retourne 'Reject' ou None.
+    """
+    from systems.stats_format import contains_forbidden_loi_wording
+
+    if contains_forbidden_loi_wording(text):
+        return "Reject"
+
+    agent = canonical_agent(result.get("agent"))
+    payload = result.get("result") or {}
+    if agent == "distribution_fit" and result.get("status") == "success":
+        loi_py = payload.get("loi_retenue") or payload.get("loi_candidate_aic")
+        if loi_py:
+            mentioned = _laws_mentioned_in_text(text)
+            if mentioned and loi_py not in mentioned:
+                return "Reject"
+
+    if agent == "normality" and result.get("status") == "success":
+        verdict = str(payload.get("verdict_normalite", "")).lower()
+        low = text.lower()
+        claims_normal = any(
+            x in low
+            for x in (
+                "compatible avec une loi normale",
+                "distribution normale",
+                "est normale",
+                "loi normale",
+                " normale (",
+            )
+        ) and "non normale" not in low and "non-normale" not in low
+        claims_non = any(
+            x in low
+            for x in (
+                "non normale",
+                "non-normale",
+                "écart significatif à la normale",
+                "pas normale",
+            )
+        )
+        if verdict == "non_normale" and claims_normal and not claims_non:
+            return "Reject"
+        if verdict == "normale" and claims_non and not claims_normal:
+            return "Reject"
+
+    return None
+
+
+def zero_llm_synthesis(context: "ClientContext") -> bool:
+    """Opt-in YAML explicite — jamais activé automatiquement."""
+    return bool(context.get_synthese_s5_config().get("zero_llm_synthese", False))
+
+
+def multi_variable_duration_warning(
+    intent: dict,
+    context: "ClientContext",
+) -> str | None:
+    """Avertissement informatif si beaucoup de variables (pas de changement de mode)."""
+    cfg = context.get_synthese_s5_config()
+    seuil = int(
+        cfg.get(
+            "avertissement_si_variables_gt",
+            cfg.get("mode_si_variables_gt", 3),
+        )
+    )
+    n_vars = len(intent.get("variables") or [])
+    if n_vars > seuil:
+        return (
+            f"Analyse de {n_vars} variables détectée — "
+            "le traitement peut prendre plus de temps que prévu."
+        )
+    return None
+
+
+def assemble_synthesis_python(
+    interpretations: list[dict],
+    intent: dict,
+    specialist_results: list[dict] | None = None,
+) -> str:
+    """Synthèse 100 % Python — corpus de fallbacks certifiés."""
+    piece = intent.get("piece")
+    operation = intent.get("operation")
+    intention = intent.get("intention", "analyse")
+    intro = (
+        f"Synthèse {intention} sur {piece} ({operation}) : "
+        if piece and operation
+        else "Synthèse : "
+    )
+    blocks: list[str] = []
+    for it in interpretations:
+        texte = str(it.get("texte", "") or "").strip()
+        if not texte or _looks_like_field_dump(texte):
+            continue
+        blocks.append(texte)
+    if not blocks:
+        return "Synthèse non disponible — résultats techniques ci-dessus."
+    body = " ".join(blocks[:12])
+    return polish_client_text(f"{intro}{body}")
+
+
+def _looks_like_field_dump(text: str) -> bool:
+    """Détecte une concaténation brute « clé : valeur »."""
+    lines = [ln.strip() for ln in text.split("\n") if ln.strip()]
+    if len(lines) < 3:
+        return False
+    dump_like = sum(1 for ln in lines if re.match(r"^[a-z_]+\s*[:=]", ln, re.I))
+    return dump_like >= max(2, len(lines) // 2)
 
 
 def format_specialist_prompt(result: dict) -> str:
@@ -525,6 +687,49 @@ def format_specialist_prompt(result: dict) -> str:
                 f"- Affichage p-value : {p.get('p_value_display', format_p_value(p.get('p_value')))}",
                 f"- Pente Sen = {p.get('sen_slope')}",
             ]
+        )
+    elif agent == "descriptive":
+        lines.extend(
+            [
+                f"- Variable : {p.get('colonne', 'N/A')}",
+                f"- n = {p.get('n')}",
+                f"- moyenne = {p.get('moyenne')} mm",
+                f"- médiane = {p.get('mediane')} mm",
+                f"- écart-type = {p.get('ecart_type')} mm",
+                f"- skewness = {p.get('skewness')}",
+                f"- kurtosis = {p.get('kurtosis')}",
+            ]
+        )
+    elif agent == "normality":
+        phrase = p.get("normalite_phrase") or certified_normalite_phrase(
+            p.get("verdict_normalite"),
+            p.get("test_utilise"),
+            p.get("statistique"),
+            p.get("p_value"),
+            p_value_display=p.get("p_value_display"),
+        )
+        lines.extend(
+            [
+                f"- Variable : {p.get('colonne', 'N/A')}",
+                f"- Libellé certifié (citer tel quel) : {phrase}",
+                f"- verdict_normalite = {p.get('verdict_normalite')}",
+            ]
+        )
+    elif agent == "distribution_fit":
+        loi = p.get("loi_retenue") or p.get("loi_candidate_aic")
+        phrase = p.get("interpretation_loi") or certified_loi_candidate_phrase(
+            loi, p.get("aic_min")
+        )
+        lines.extend(
+            [
+                f"- Variable : {p.get('colonne', 'N/A')}",
+                f"- loi_retenue = {loi}",
+                f"- Libellé certifié (citer tel quel) : {phrase}",
+                f"- aic_min = {p.get('aic_min')}",
+            ]
+        )
+        lines.append(
+            "\nConsigne : ne jamais écrire « loi probable » ou « loi possible »."
         )
     elif agent == "zscore":
         lines.extend(
@@ -607,17 +812,15 @@ def enriched_normality_interpretation(result: dict) -> str:
     """Fallback normalité — verdict Python uniquement."""
     p = result.get("result") or {}
     col = p.get("colonne", "la mesure")
-    phrase = p.get("normalite_phrase") or ""
-    test = p.get("test_utilise", "")
+    phrase = p.get("normalite_phrase") or certified_normalite_phrase(
+        p.get("verdict_normalite"),
+        p.get("test_utilise"),
+        p.get("statistique"),
+        p.get("p_value"),
+        p_value_display=p.get("p_value_display"),
+    )
     n = p.get("n")
-    verdict = p.get("verdict_normalite", "")
-    body = f"Normalité sur {col} (n={n}) : {phrase or verdict}."
-    if test:
-        body += f" Test retenu : {test}."
-    ks_note = p.get("ks_note")
-    if ks_note and n and int(n) >= 5000:
-        pass
-    return polish_client_text(body.strip())
+    return polish_client_text(f"{col} : {phrase} (n={n}).")
 
 
 def enriched_distribution_fit_interpretation(result: dict) -> str:
@@ -625,13 +828,10 @@ def enriched_distribution_fit_interpretation(result: dict) -> str:
     p = result.get("result") or {}
     col = p.get("colonne", "la mesure")
     loi = p.get("loi_retenue") or p.get("loi_candidate_aic")
-    aic = p.get("aic_min")
-    interp = p.get("interpretation_loi") or (
-        f"Meilleur ajustement parmi les lois testées : {loi} (AIC = {aic})"
-        if loi and aic is not None
-        else ""
+    interp = p.get("interpretation_loi") or certified_loi_candidate_phrase(
+        loi, p.get("aic_min")
     )
-    return polish_client_text(f"Distribution sur {col} : {interp}.")
+    return polish_client_text(f"{col} : {interp}.")
 
 
 def enriched_anova_interpretation(

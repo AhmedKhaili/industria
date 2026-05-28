@@ -107,7 +107,12 @@ class TestS5CriticalFallbackTimeout:
         assert s5.get("error") is None
         assert len(s5["interpretations"]) >= 1
         assert any(
-            it.get("statut") == "fallback" or "conforme" in it.get("texte", "").lower()
+            it.get("statut") in ("fallback", "Accept")
+            and (
+                "conforme" in it.get("texte", "").lower()
+                or "0.85" in it.get("texte", "")
+                or "critique" in it.get("texte", "").lower()
+            )
             for it in s5["interpretations"]
         )
 

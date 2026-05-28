@@ -42,6 +42,12 @@ def run(
             tokens_max * 2,
         )
 
+        if prep.zero_llm_synthesis(context):
+            synthese = prep.assemble_synthesis_python(
+                interpretations, intent, specialist_results
+            )
+            return {"error": None, "synthese": synthese, "llm_used": False}
+
         forbidden_note = ""
         if forbidden:
             forbidden_note = (

@@ -50,9 +50,14 @@ class S5Pipeline:
             specialist_results = list(s3_output.get("specialist_results") or [])
             descriptions = prep.descriptions_list(s4_output)
 
+            warnings: list[str] = []
+            duration_warn = prep.multi_variable_duration_warning(intent, self.ctx)
+            if duration_warn:
+                warnings.append(duration_warn)
+
             llm_client.reset_step_stats()
             t0 = time.perf_counter()
-            r1 = r1_interpreter.run(specialist_results, intent)
+            r1 = r1_interpreter.run(specialist_results, intent, self.ctx)
             _trace_step(
                 trace,
                 "r1",
@@ -103,7 +108,7 @@ class S5Pipeline:
             r4 = r4_coherence.run(interpretations, specialist_results)
             _trace_step(trace, "r4", r4, t0)
 
-            warnings = reject_warnings + list(r4.get("warnings", []))
+            warnings = warnings + reject_warnings + list(r4.get("warnings", []))
             interpretations = list(r4["interpretations"])
 
             t0 = time.perf_counter()

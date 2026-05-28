@@ -38,6 +38,7 @@ def test_dispatch_analyse_complete_portrait_then_correlation() -> None:
         "normality",
         "distribution_fit",
         "correlation",
+        "cp_cpk",
     ]
 
 

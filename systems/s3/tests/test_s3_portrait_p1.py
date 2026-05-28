@@ -77,7 +77,14 @@ class TestPortraitDispatch:
             "normality",
             "distribution_fit",
             "correlation",
+            "cp_cpk",
         ]
+
+    def test_analyse_complete_adds_anova_when_group_by(self) -> None:
+        disp = dispatcher.dispatch(
+            {"intention": "analyse_complete", "group_by": "Ref_Matrice"}
+        )
+        assert "anova_kruskal" in disp["specialists"]
 
 
 class TestPortraitLisi:

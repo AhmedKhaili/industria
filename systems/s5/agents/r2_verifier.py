@@ -27,6 +27,15 @@ def run(
                 verified.append(entry)
                 continue
 
+            if prep.verify_r2_qualitative(texte, result) == "Reject":
+                entry["texte"] = prep.python_fallback_interpretation(
+                    result, specialist_results, intent
+                )
+                entry["statut"] = "reject"
+                entry["motif_reject"] = {"cause": "qualitatif", "detail": "verdict ou loi"}
+                verified.append(entry)
+                continue
+
             numbers = prep.extract_numbers_from_text(texte)
             worst = "Accept"
             reject_motif: dict | None = None

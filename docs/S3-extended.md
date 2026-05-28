@@ -3,7 +3,8 @@
 > **Statut** : **VALIDÉ v1.1** (GO D0 — 2026-05-27)  
 > **D1** : annexe A intégrée → `docs/PHILOSOPHY.md` §28  
 > **P0** : `correlation` branché sous `analyse_complete` ✅  
-> **P1** : `descriptive`, `normality`, `distribution_fit` + `portrait_statistique` ✅
+> **P1** : `descriptive`, `normality`, `distribution_fit` + `portrait_statistique` ✅  
+> **P2** : intentions S1 (`portrait_statistique`, `diagnostic_causal`, `analyse_complete`) ✅
 
 **Documents liés** : `docs/VISION.md`, `docs/PHILOSOPHY.md` (§28), `docs/S3.md`, `docs/S5.md`, `docs/S7.md`.
 
@@ -295,7 +296,7 @@ Obligatoire pour chaque nouveau spécialiste avant merge (même pattern que `enr
 | Mode | Règle |
 |------|--------|
 | `mode_synthese: llm` | Comportement actuel |
-| `mode_synthese: agregee_python` | Si `variables > seuil` (YAML §5) : paragraphes assemblés depuis fallbacks + 1 phrase de liaison max (option LLM courte) |
+| Multi-variables S5 | Si `variables > seuil` : warning durée uniquement ; R1 LLM par spécialiste inchangé ; `zero_llm_synthese` = opt-in YAML |
 
 ### 4.4 Consignes langage (R1 / R6 / R7)
 
@@ -321,9 +322,8 @@ analyse_etendue:
     inclure_cp_cpk: true
     inclure_comparaison_groupes: true  # si group_by résolu
   synthese_s5:
-    mode_par_defaut: "llm"
-    mode_si_variables_gt: 3
-    mode_alors: "agregee_python"        # évite 15+ appels LLM FIFO
+    avertissement_si_variables_gt: 3
+    zero_llm_synthese: false            # opt-in explicite — jamais auto
   rapport:
     type_simple: "client_quality"        # actuel v5c
     type_complet: "client_quality_complet"
@@ -409,7 +409,7 @@ Déclenché par : `intent.rapport_type == "complet"` **ou** intention `analyse_c
 | **P0** | `correlation` sous `analyse_complete` — dispatcher + executor + test LISI | ✅ **Validé** — ne pas lancer P1 sans relecture |
 | **P1** | `descriptive`, `normality`, `distribution_fit` + tests unitaires | ✅ Validé |
 | **P2** | S1 : intentions YAML + `agent_4` + tests S1 | PR dédié |
-| **P3** | S5 : R2 refs, fallbacks, `normalite_phrase`, `loi_candidate_aic`, mode `agregee_python` | PR dédié |
+| **P3** | S5 : R2 refs, fallbacks, `normalite_phrase`, `loi_candidate_aic`, mode `agregee_python` | ✅ Validé |
 | **P4** | S7 : `rapport_type complet`, sections A1/renderer | PR dédié |
 | **P5** | `eta_squared` + PDF « Facteurs influents » | **Nouvelle validation** doc v2 |
 
@@ -465,7 +465,7 @@ Spec dédiée ou amendement `S3-extended` v2 après retour terrain sur P1–P4.
 | 2 | **zscore** dans `analyse_complete` = **non par défaut** |
 | 3 | **correlation** = sous-ensemble **`analyse_complete` uniquement** — pas d'intention dédiée |
 | 4 | **QQ-plot** = reportable P4 ; profil **`ingenieur`** seulement |
-| 5 | **`agregee_python`** dès **3 variables** = **oui** |
+| 5 | **> 3 variables** = warning S5 durée ; **pas** de mode agregee auto ; `zero_llm_synthese` opt-in |
 | 6 | **`ks_note`** = log technique uniquement — **pas** en PDF client |
 
 ---
@@ -479,4 +479,4 @@ Spec dédiée ou amendement `S3-extended` v2 après retour terrain sur P1–P4.
 | scipy seul | scipy seul (inchangé) |
 | PDF simple | PDF **simple** + PDF **complet** |
 
-**Prochaine étape** : **P2** — intentions S1 (`portrait_statistique`, `analyse_complete`, …).
+**Prochaine étape** : **P3** — fallbacks S5 étendus, `agregee_python`, R2.
