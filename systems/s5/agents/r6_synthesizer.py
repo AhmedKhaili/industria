@@ -60,13 +60,20 @@ def run(
             "références au pipeline ou aux modules IndustrIA.\n"
         )
 
+        variables_line = prep._intent_variables_line(intent)
+        filtres = intent.get("filtres") if isinstance(intent.get("filtres"), dict) else {}
+        piece = intent.get("piece") or filtres.get("piece")
+        operation = intent.get("operation") or filtres.get("operation")
+
         prompt = (
             f"Profil lecteur : {profile}\n"
             f"Intention analyse : {intent.get('intention', 'analyse')}\n"
-            f"Pièce : {intent.get('piece')}\n"
-            f"Opération : {intent.get('operation')}\n"
+            f"Pièce (nom exact à utiliser) : {piece}\n"
+            f"Opération (nom exact) : {operation}\n"
+            f"Variables analysées (noms exacts, obligatoires) : {variables_line}\n"
             f"{forbidden_note}"
             f"{internal_note}"
+            "Interdit : placeholders « pièce A », « opération B », « variables C, D et E ».\n"
             "Synthétise en un paragraphe clair les points suivants "
             "(ne invente aucun chiffre). "
             "Pour les p-values : reprends les libellés certifiés tels quels — "

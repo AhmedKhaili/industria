@@ -91,6 +91,34 @@ def run(
                         )
                     )
 
+            elif agent == "descriptive":
+                pct_hors = p.get("pct_hors_lti_lts")
+                if pct_hors is not None and float(pct_hors) > 0:
+                    col = p.get("colonne", cause_label)
+                    pct_lts = p.get("pct_au_dessus_lts")
+                    pct_txt = _fmt_pct(pct_hors)
+                    detail = (
+                        f"{_fmt_pct(pct_lts)} % au-dessus du LTS"
+                        if pct_lts is not None
+                        else f"{pct_txt} % hors tolérances"
+                    )
+                    raw_items.append(
+                        _item(
+                            "P1",
+                            "hors_tolerance",
+                            responsable,
+                            prep.delai_for(cfg, "P1"),
+                            f"Mesures hors tolérances : {detail} sur {col}.",
+                            cause_key,
+                            cause_label,
+                            use_llm=True,
+                            chiffres={
+                                "pct_hors_tol": float(pct_hors),
+                                "colonne": col,
+                            },
+                        )
+                    )
+
             elif agent == "zscore":
                 max_z = p.get("max_zscore")
                 pct = p.get("pourcentage_anomalies")
@@ -232,6 +260,12 @@ def run(
         return {"error": None, "items": items}
     except Exception as exc:  # noqa: BLE001
         return {"error": str(exc), "items": []}
+
+
+def _fmt_pct(val: float | int | None) -> str:
+    if val is None:
+        return "0"
+    return f"{float(val):.1f}".replace(".", ",")
 
 
 def _item(

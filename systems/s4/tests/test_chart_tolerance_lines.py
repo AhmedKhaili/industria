@@ -30,6 +30,47 @@ def test_add_tolerance_lines_hline() -> None:
     assert len(fig.layout.shapes) >= 2
 
 
+def test_nominal_label_hidden_when_coincides_with_lti() -> None:
+    fig = go.Figure()
+    chart_builder._add_tolerance_lines(
+        fig,
+        {"lti": 0.0, "lts": 0.2, "nominal": 0.0},
+        axis="x",
+        value_span=0.2,
+    )
+    ann_texts = [
+        getattr(a, "text", "") or ""
+        for a in (fig.layout.annotations or [])
+    ]
+    assert not any("Nominal" in t for t in ann_texts)
+    assert len(fig.layout.shapes) >= 3
+
+
+def test_vline_without_annotation_has_no_new_text_label() -> None:
+    fig = go.Figure()
+    chart_builder._add_tolerance_lines(
+        fig,
+        {"lti": 0.0, "lts": 0.2, "nominal": 0.0},
+        axis="x",
+        value_span=0.2,
+    )
+    ann_texts = [getattr(a, "text", "") or "" for a in (fig.layout.annotations or [])]
+    assert "new text" not in " ".join(ann_texts).lower()
+    assert "Nominal" not in ann_texts
+
+
+def test_histogram_nominal_zero_no_nominal_annotation(lisi_ctx: ClientContext) -> None:
+    df = pd.DataFrame({"CR90_INTRADOS_FORME": [0.0, 0.05, 0.12, 0.18, 0.08]})
+    intent = {
+        "piece": "M2L1A1C",
+        "operation": "EQUATOR",
+        "variables": ["CR90_INTRADOS_FORME"],
+    }
+    out = chart_builder.build_histogram(df, "CR90_INTRADOS_FORME", lisi_ctx, intent)
+    assert out.get("error") is None
+    assert out.get("png_bytes")
+
+
 def test_boxplot_includes_tolerance_shapes(lisi_ctx: ClientContext) -> None:
     df = pd.DataFrame(
         {

@@ -117,6 +117,11 @@ def _sanitize(
     return out
 
 
+def _show_chart_interpretation(text: str) -> bool:
+    t = str(text or "").strip()
+    return t not in ("", "N/A", "NA", "NONE", "—", "-")
+
+
 def render_pdf(
     document: ReportDocument,
     *,
@@ -240,6 +245,116 @@ def render_pdf(
                 )
             story.append(Spacer(1, 4 * mm))
 
+        elif btype == "portrait_statistique":
+            story.append(Paragraph("PORTRAIT STATISTIQUE", styles["h1"]))
+            variables = data.get("variables") or []
+            if not variables:
+                story.append(
+                    Paragraph("Aucune donnée descriptive certifiée.", styles["body"])
+                )
+            body_style = styles["body"]
+            for card in variables:
+                var = clean(str(card.get("variable", "")))
+                story.append(Paragraph(f"<b>{var}</b>", styles["h1"]))
+                cols = list(card.get("columns") or ["Indicateur", "Valeur"])
+                rows_in = list(card.get("rows") or [])
+                if rows_in:
+                    table_rows: list[list[Any]] = [
+                        [Paragraph(f"<b>{clean(str(c))}</b>", body_style) for c in cols]
+                    ]
+                    for row in rows_in:
+                        cells = [
+                            Paragraph(clean(str(c)), body_style)
+                            for c in row[: len(cols)]
+                        ]
+                        while len(cells) < len(cols):
+                            cells.append(Paragraph("", body_style))
+                        table_rows.append(cells)
+                    tbl = Table(
+                        table_rows,
+                        colWidths=[_CONTENT_WIDTH * 0.45, _CONTENT_WIDTH * 0.55],
+                        repeatRows=1,
+                    )
+                    tbl.setStyle(
+                        TableStyle(
+                            [
+                                ("BACKGROUND", (0, 0), (-1, 0), _HEADER),
+                                ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+                                ("FONTSIZE", (0, 0), (-1, -1), 8),
+                                ("GRID", (0, 0), (-1, -1), 0.5, colors.lightgrey),
+                                ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                            ]
+                        )
+                    )
+                    story.extend([tbl, Spacer(1, 3 * mm)])
+                vn = clean(str(card.get("verdict_normalite", "")))
+                if vn and vn != "N/A":
+                    story.append(
+                        Paragraph(
+                            f"<b>Verdict normalité :</b> {vn}",
+                            styles["body"],
+                        )
+                    )
+                loi = clean(str(card.get("loi_retenue", "")))
+                if loi and loi != "N/A":
+                    story.append(
+                        Paragraph(
+                            f"<b>Loi retenue :</b> {loi}",
+                            styles["body"],
+                        )
+                    )
+                story.append(Spacer(1, 4 * mm))
+            story.append(PageBreak())
+
+        elif btype == "facteurs_influents":
+            story.append(Paragraph("FACTEURS INFLUENTS", styles["h1"]))
+            intro = data.get("intro")
+            if intro:
+                story.append(Paragraph(clean(str(intro)), styles["body"]))
+                story.append(Spacer(1, 3 * mm))
+            body_style = styles["body"]
+            for tdef in data.get("tables") or []:
+                title = tdef.get("title")
+                if title:
+                    story.append(Paragraph(clean(str(title)), styles["h1"]))
+                cols = list(tdef.get("columns") or [])
+                rows_in = list(tdef.get("rows") or [])
+                if not cols or not rows_in:
+                    continue
+                table_rows: list[list[Any]] = [
+                    [Paragraph(f"<b>{clean(str(c))}</b>", body_style) for c in cols]
+                ]
+                for row in rows_in:
+                    cells = [
+                        Paragraph(clean(str(c)), body_style) for c in row[: len(cols)]
+                    ]
+                    while len(cells) < len(cols):
+                        cells.append(Paragraph("", body_style))
+                    table_rows.append(cells)
+                ncols = max(len(cols), 1)
+                tbl = Table(
+                    table_rows,
+                    colWidths=[_CONTENT_WIDTH / ncols] * ncols,
+                    repeatRows=1,
+                )
+                tbl.setStyle(
+                    TableStyle(
+                        [
+                            ("BACKGROUND", (0, 0), (-1, 0), _HEADER),
+                            ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+                            ("FONTSIZE", (0, 0), (-1, -1), 8),
+                            ("GRID", (0, 0), (-1, -1), 0.5, colors.lightgrey),
+                            ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                        ]
+                    )
+                )
+                story.extend([tbl, Spacer(1, 4 * mm)])
+            for line in data.get("dunn_summary") or []:
+                story.append(
+                    Paragraph(f"• {clean(str(line))}", styles["body"])
+                )
+            story.append(PageBreak())
+
         elif btype == "executive":
             story.append(Paragraph("RÉSUMÉ EXÉCUTIF", styles["h1"]))
             s5_txt = data.get("synthese_s5")
@@ -313,7 +428,8 @@ def render_pdf(
             story.append(PageBreak())
 
         elif btype == "charts":
-            story.append(Paragraph("PREUVES VISUELLES", styles["h1"]))
+            charts_title = str(data.get("section_title") or "PREUVES VISUELLES")
+            story.append(Paragraph(charts_title, styles["h1"]))
             items = data.get("items") or []
             if not items:
                 story.append(Paragraph("Aucun graphique disponible.", styles["body"]))
@@ -340,13 +456,22 @@ def render_pdf(
                         )
                     )
                 cap = it.get("caption")
-                if cap:
+                if _show_chart_interpretation(str(cap or "")):
                     story.append(Paragraph(clean(str(cap)), styles["caption"]))
+                interp = it.get("interpretation")
+                if _show_chart_interpretation(str(interp or "")):
+                    story.append(Spacer(1, 2 * mm))
+                    story.append(Paragraph(clean(str(interp)), styles["body"]))
                 story.append(Spacer(1, 4 * mm))
             story.append(PageBreak())
 
         elif btype == "metrics_table":
-            story.append(Paragraph("MÉTRIQUES DÉTAILLÉES", styles["h1"]))
+            metrics_title = str(
+                data.get("section_title")
+                or meta.get("metrics_section_title")
+                or "MÉTRIQUES DÉTAILLÉES"
+            )
+            story.append(Paragraph(metrics_title, styles["h1"]))
             structured = data.get("tables") or []
             if not structured:
                 legacy = data.get("rows") or []

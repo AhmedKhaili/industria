@@ -9,6 +9,9 @@ INTENTION_CHARTS: dict[str, list[str]] = {
     "comparaison_groupes": ["boxplot"],
     "tendance": ["timeseries"],
     "anomalie": ["timeseries"],
+    "portrait_statistique": ["histogram", "boxplot", "qqplot"],
+    "diagnostic_causal": ["boxplot"],
+    "analyse_complete": ["histogram", "boxplot"],
 }
 
 

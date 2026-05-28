@@ -806,6 +806,8 @@ rapport_pdf:
   max_graphiques_technicien: 12
   max_graphiques_operateur: 8
   max_graphiques_client: 3
+  max_graphiques_complet: 8
+  max_pages_complet: 12
   max_recommandations_client: 4
   sauvegarder_dans: "reports/"
   bandeau_defaut_couleur: "#1565C0"

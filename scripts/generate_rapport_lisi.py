@@ -20,18 +20,26 @@ from systems.s6.pipeline import S6Pipeline
 from systems.s7.pipeline import S7Pipeline
 
 YAML = REPO / "configs/lisi_aerospace/client_config.yaml"
-QUESTION = "La matrice a-t-elle un impact sur la forme intrados de M2L1A1C ?"
+DEFAULT_QUESTION = (
+    "La matrice a-t-elle un impact sur la forme intrados de M2L1A1C ?"
+)
 
 
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("output", type=Path, help="Chemin PDF de sortie")
     parser.add_argument("--profile", default="technicien")
+    parser.add_argument(
+        "--question",
+        default=DEFAULT_QUESTION,
+        help="Question utilisateur (défaut : comparaison matrices)",
+    )
     args = parser.parse_args()
+    question = args.question.strip()
 
     yaml = str(YAML)
     print("S1…", flush=True)
-    s1 = S1Pipeline(yaml).run(QUESTION)
+    s1 = S1Pipeline(yaml).run(question)
     intent = s1["intent"]
     if intent.get("clarification_needed"):
         print("Intent incomplet:", intent.get("clarification_message"))
@@ -69,7 +77,7 @@ def main() -> int:
 
     print("S7…", flush=True)
     s7 = S7Pipeline(yaml).run(
-        QUESTION,
+        question,
         intent,
         s3,
         s4,

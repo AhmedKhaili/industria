@@ -40,10 +40,30 @@ class ReportDocument:
                 for row in data["rows"]:
                     if isinstance(row, (list, tuple)):
                         parts.extend(str(c) for c in row)
-            for key in ("action", "text", "caption", "title", "synthese_s5", "synthese_s6"):
+            for key in (
+                "action",
+                "text",
+                "caption",
+                "title",
+                "synthese_s5",
+                "synthese_s6",
+                "intro",
+                "verdict_normalite",
+                "loi_retenue",
+            ):
                 val = data.get(key)
                 if isinstance(val, str):
                     parts.append(val)
+            for card in data.get("variables") or []:
+                if isinstance(card, dict):
+                    parts.append(str(card.get("variable", "")))
+                    parts.append(str(card.get("verdict_normalite", "")))
+                    parts.append(str(card.get("loi_retenue", "")))
+                    for row in card.get("rows") or []:
+                        if isinstance(row, (list, tuple)):
+                            parts.extend(str(c) for c in row)
+            for line in data.get("dunn_summary") or []:
+                parts.append(str(line))
             for item in data.get("items") or data.get("recommendations") or []:
                 if isinstance(item, dict):
                     for k in ("action", "text", "specialist", "justification"):

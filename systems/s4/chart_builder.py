@@ -4,12 +4,17 @@ Construction des PNG via enterprise/report/charts.py.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+import io
+from typing import TYPE_CHECKING, Any
 
+import numpy as np
 import pandas as pd
 import plotly.express as px
+import plotly.graph_objects as go
+from scipy import stats
 
 from enterprise.report import charts as report_charts
+from systems.stats.portrait_metrics import fit_pdf_grid
 
 if TYPE_CHECKING:
     from systems.s1.client_context import ClientContext
@@ -58,7 +63,35 @@ def _unit_label(context: "ClientContext", intent: dict, variable: str) -> str:
     return "valeur brute"
 
 
-def _add_tolerance_lines(fig, tol: dict | None, *, axis: str = "y") -> None:
+def _tolerance_span(tol: dict, value_span: float | None = None) -> float:
+    """Plage pour seuil de chevauchement nominal / LTI / LTS (5 %)."""
+    if value_span is not None and value_span > 0:
+        return float(value_span)
+    lti, lts = tol.get("lti"), tol.get("lts")
+    if lti is not None and lts is not None:
+        return max(float(lts) - float(lti), 1e-9)
+    return 1.0
+
+
+def _nominal_label_visible(tol: dict, value_span: float | None = None) -> bool:
+    """Masque le label Nominal s'il chevauche LTI ou LTS (ligne conservée)."""
+    if tol.get("nominal") is None:
+        return False
+    nom = float(tol["nominal"])
+    thresh = 0.05 * _tolerance_span(tol, value_span)
+    for key in ("lti", "lts"):
+        if tol.get(key) is not None and abs(nom - float(tol[key])) < thresh:
+            return False
+    return True
+
+
+def _add_tolerance_lines(
+    fig,
+    tol: dict | None,
+    *,
+    axis: str = "y",
+    value_span: float | None = None,
+) -> None:
     """Trace LTI / LTS / nominal sur un graphique Plotly (y = boxplot, x = histogramme)."""
     if not tol:
         return
@@ -70,20 +103,26 @@ def _add_tolerance_lines(fig, tol: dict | None, *, axis: str = "y") -> None:
         if tol.get(key) is None:
             continue
         val = float(tol[key])
+        show_ann = not (key == "nominal" and not _nominal_label_visible(tol, value_span))
         if axis == "y":
-            fig.add_hline(
-                y=val,
-                line_dash=dash,
-                line_color=color,
-                annotation_text=label,
-            )
-        else:
+            if show_ann:
+                fig.add_hline(
+                    y=val,
+                    line_dash=dash,
+                    line_color=color,
+                    annotation_text=label,
+                )
+            else:
+                fig.add_hline(y=val, line_dash=dash, line_color=color)
+        elif show_ann:
             fig.add_vline(
                 x=val,
                 line_dash=dash,
                 line_color=color,
                 annotation_text=label,
             )
+        else:
+            fig.add_vline(x=val, line_dash=dash, line_color=color)
 
 
 def _chart_description(
@@ -106,11 +145,31 @@ def _chart_description(
     return " — ".join(p for p in parts if p)
 
 
+def _fit_for_variable(
+    specialist_results: list[dict] | None,
+    variable: str,
+) -> dict | None:
+    if not specialist_results:
+        return None
+    for item in specialist_results:
+        if item.get("status") != "success":
+            continue
+        agent = str(item.get("agent", "")).lower()
+        if "distribution" not in agent:
+            continue
+        res = item.get("result") or {}
+        if str(res.get("colonne", "")) == variable and res.get("loi_retenue"):
+            return res
+    return None
+
+
 def build_histogram(
     df: pd.DataFrame,
     variable: str,
     context: "ClientContext",
     intent: dict,
+    *,
+    specialist_results: list[dict] | None = None,
 ) -> dict:
     try:
         if variable not in df.columns:
@@ -128,7 +187,30 @@ def build_histogram(
         nbins = min(40, max(10, len(work) // 5))
         fig = px.histogram(work, x=variable, nbins=nbins)
         tol = _tolerance(context, intent, variable)
-        _add_tolerance_lines(fig, tol, axis="x")
+        vals = work[variable].astype(float)
+        data_span = float(vals.max() - vals.min()) or 1.0
+        _add_tolerance_lines(fig, tol, axis="x", value_span=data_span)
+
+        fit = _fit_for_variable(specialist_results, variable)
+        if fit and fit.get("loi_retenue") != "normale":
+            grid = fit_pdf_grid(
+                str(fit["loi_retenue"]),
+                dict(fit.get("parametres") or {}),
+                float(vals.min()),
+                float(vals.max()),
+            )
+            if grid is not None:
+                xs, pdf = grid
+                scale = len(vals) * (data_span / nbins)
+                fig.add_trace(
+                    go.Scatter(
+                        x=xs,
+                        y=pdf * scale,
+                        mode="lines",
+                        name="Loi ajustée",
+                        line=dict(color="#1E3A5F", width=2),
+                    )
+                )
 
         unit = _unit_label(context, intent, variable)
         fig.update_layout(
@@ -147,11 +229,52 @@ def build_histogram(
         return {"error": str(exc), "png_bytes": None}
 
 
+def build_qqplot(
+    df: pd.DataFrame,
+    variable: str,
+    context: "ClientContext",
+    intent: dict,
+    *,
+    specialist_results: list[dict] | None = None,
+) -> dict:
+    """QQ-plot empirique vs normale théorique."""
+    _ = specialist_results
+    try:
+        import matplotlib
+
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+
+        if variable not in df.columns:
+            return {"error": f"Variable absente : {variable}", "png_bytes": None}
+        series = pd.to_numeric(df[variable], errors="coerce").dropna()
+        if len(series) < 8:
+            return {"error": "Effectif insuffisant pour QQ-plot", "png_bytes": None}
+
+        fig_mpl, ax = plt.subplots(figsize=(8, 4))
+        stats.probplot(series.to_numpy(dtype=float), dist="norm", plot=ax)
+        ax.set_title(f"QQ-plot — {variable}")
+        ax.grid(True, alpha=0.3)
+        buf = io.BytesIO()
+        fig_mpl.tight_layout()
+        fig_mpl.savefig(buf, format="png", dpi=100)
+        plt.close(fig_mpl)
+        return {
+            "error": None,
+            "png_bytes": buf.getvalue(),
+            "description": _chart_description("qqplot", variable, intent, context),
+        }
+    except Exception as exc:  # noqa: BLE001
+        return {"error": str(exc), "png_bytes": None}
+
+
 def build_boxplot_chart(
     df: pd.DataFrame,
     variable: str,
     context: "ClientContext",
     intent: dict,
+    *,
+    specialist_results: list[dict] | None = None,
 ) -> dict:
     """Boxplot Plotly avec LTI/LTS en lignes horizontales (S4 — sans modifier enterprise/)."""
     try:
@@ -175,7 +298,10 @@ def build_boxplot_chart(
             fig = px.box(plot_df, y=variable, points="outliers")
             title = f"Distribution — {variable}"
 
-        _add_tolerance_lines(fig, _tolerance(context, intent, variable), axis="y")
+        tol = _tolerance(context, intent, variable)
+        y_span = float(plot_df[variable].max() - plot_df[variable].min()) or 1.0
+        _add_tolerance_lines(fig, tol, axis="y", value_span=y_span)
+        _ = specialist_results
         fig.update_layout(
             **report_charts.PLOTLY_THEME,
             title=title,
@@ -213,8 +339,11 @@ def build_timeseries_chart(
 _BUILDERS = {
     "histogram": build_histogram,
     "boxplot": build_boxplot_chart,
+    "qqplot": build_qqplot,
     "timeseries": build_timeseries_chart,
 }
+
+_PORTRAIT_CHART_TYPES = ("histogram", "boxplot", "qqplot")
 
 
 def build_charts(
@@ -222,6 +351,8 @@ def build_charts(
     intent: dict,
     context: "ClientContext",
     chart_types: list[str],
+    *,
+    specialist_results: list[dict] | None = None,
 ) -> dict:
     try:
         if df is None or df.empty:
@@ -232,13 +363,50 @@ def build_charts(
             return {"error": "Aucune variable numérique à tracer", "charts": []}
 
         charts: list[dict] = []
+        intention = str(intent.get("intention") or "")
+        if intention == "portrait_statistique":
+            types_for_portrait = [t for t in _PORTRAIT_CHART_TYPES if t in chart_types or not chart_types]
+            if not types_for_portrait:
+                types_for_portrait = list(_PORTRAIT_CHART_TYPES)
+            for variable in variables[:3]:
+                portrait_intent = {**intent, "group_by": None}
+                for chart_type in types_for_portrait:
+                    builder = _BUILDERS.get(chart_type)
+                    if not builder:
+                        continue
+                    built = builder(
+                        df,
+                        variable,
+                        context,
+                        portrait_intent,
+                        specialist_results=specialist_results,
+                    )
+                    charts.append(
+                        {
+                            "id": f"{chart_type}_{variable}",
+                            "type": chart_type,
+                            "variable": variable,
+                            "title": f"{chart_type} — {variable}",
+                            "png_bytes": built.get("png_bytes"),
+                            "description": built.get("description", ""),
+                            "error": built.get("error"),
+                        }
+                    )
+            return {"error": None, "charts": charts}
+
         for chart_type in chart_types:
             builder = _BUILDERS.get(chart_type)
             if not builder:
                 continue
-            vars_to_plot = variables[:1] if chart_type in ("histogram", "timeseries") else variables
+            vars_to_plot = variables[:1] if chart_type in ("histogram", "qqplot", "timeseries") else variables
             for variable in vars_to_plot:
-                built = builder(df, variable, context, intent)
+                built = builder(
+                    df,
+                    variable,
+                    context,
+                    intent,
+                    specialist_results=specialist_results,
+                )
                 charts.append(
                     {
                         "id": f"{chart_type}_{variable}",

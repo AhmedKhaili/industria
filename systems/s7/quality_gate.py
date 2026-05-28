@@ -7,12 +7,19 @@ from __future__ import annotations
 import re
 from typing import TYPE_CHECKING, Any
 
+from pypdf import PdfReader
+
 from systems.s7 import prep
 
 if TYPE_CHECKING:
     from systems.s7.document import ReportDocument
 
 _CLIENT_JARGON = [
+    re.compile(r"\bdescriptive\b", re.I),
+    re.compile(r"\bnormality\b", re.I),
+    re.compile(r"\bdistribution_fit\b", re.I),
+    re.compile(r"\bAIC\s*=", re.I),
+    re.compile(r"\bBIC\s*=", re.I),
     re.compile(r"\bLLM\b", re.I),
     re.compile(r"\bfallback\b", re.I),
     re.compile(r"écart\s+LLM", re.I),
@@ -121,7 +128,8 @@ def run(
 
     charts = document.find("charts") if document else None
     n_charts = len((charts.data.get("items") if charts else []) or [])
-    if n_charts < 1 and not blocking:
+    # Placeholder / analyse sans graphique : ne pas bloquer si aucun spécialiste exécuté
+    if n_charts < 1 and specialist_results and not blocking:
         blocking.append("Aucun graphique dans le rapport client")
 
     pdf_empty = not body.strip()
@@ -130,6 +138,23 @@ def run(
 
     if not question_originale.strip():
         blocking.append("Question originale absente")
+
+    rapport_type = str((document.meta or {}).get("rapport_type", "simple")).lower()
+    if rapport_type == "complet":
+        max_pages = prep.max_pages_complet(cfg)
+        try:
+            from io import BytesIO
+
+            from systems.s7.renderer_stub import render_pdf
+
+            pdf_bytes = render_pdf(document)
+            n_pages = len(PdfReader(BytesIO(pdf_bytes)).pages)
+            if n_pages > max_pages:
+                blocking.append(
+                    f"Rapport complet dépasse {max_pages} pages ({n_pages} pages)"
+                )
+        except Exception as exc:  # noqa: BLE001
+            warnings.append(f"Contrôle nombre de pages ignoré : {exc}")
 
     publishable = len(blocking) == 0
     return {"blocking": blocking, "warnings": warnings, "publishable": publishable}
