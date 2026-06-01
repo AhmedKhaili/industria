@@ -29,15 +29,28 @@ class S3Pipeline:
                     "specialist_results": [],
                     "group_ranking": {},
                     "metrics_summary": {},
+                    "families_executed": [],
+                    "analysis_family_warnings": [],
                     "warnings": [],
                     "pipeline_trace": trace,
                     "error": "Intent S1 incomplet — clarification requise avant S3",
                 }
 
             disp = dispatcher.dispatch(intent)
-            trace.append({"step": "dispatcher", "ok": disp.get("error") is None})
+            family_warnings = list(disp.get("analysis_family_warnings") or [])
+            trace.append(
+                {
+                    "step": "dispatcher",
+                    "ok": disp.get("error") is None,
+                    "families": disp.get("analysis_families") or [],
+                    "warnings": family_warnings,
+                }
+            )
             if disp.get("error"):
                 return self._empty_error(disp["error"], trace)
+
+            families_executed = list(disp.get("analysis_families") or [])
+            pipeline_warnings: list[str] = []
 
             exec_res = executor.run_all(
                 df_propre, intent, self.ctx, disp["specialists"]
@@ -60,12 +73,23 @@ class S3Pipeline:
             )
             if ranking:
                 metrics_summary["group_ranking"] = ranking
+            if families_executed:
+                metrics_summary["families_executed"] = families_executed
+            if family_warnings:
+                metrics_summary["analysis_family_warnings"] = family_warnings
+                for item in family_warnings:
+                    pipeline_warnings.append(
+                        "P6 dispatcher fallback legacy "
+                        f"({item.get('intention')}): {item.get('fallback_reason')}"
+                    )
 
             return {
                 "specialist_results": results,
                 "group_ranking": ranking,
                 "metrics_summary": metrics_summary,
-                "warnings": judged.get("warnings", []),
+                "families_executed": families_executed,
+                "analysis_family_warnings": family_warnings,
+                "warnings": pipeline_warnings + list(judged.get("warnings", [])),
                 "pipeline_trace": trace,
                 "error": None,
             }
@@ -78,6 +102,8 @@ class S3Pipeline:
             "specialist_results": [],
             "group_ranking": {},
             "metrics_summary": {},
+            "families_executed": [],
+            "analysis_family_warnings": [],
             "warnings": [],
             "pipeline_trace": trace,
             "error": message,

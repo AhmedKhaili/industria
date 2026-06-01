@@ -55,6 +55,12 @@ Python = tous les calculs et décisions méthodologiques.
 - enterprise/report/ → S7
 - enterprise/rag/ → S6
 
+## Feuille de route produit (post-S7)
+- **P5** : `eta_squared` et extensions statistiques — `docs/S3-extended.md`
+- **P6** : Cartographie analytique industrielle — `docs/P6-CARTOGRAPHIE-ANALYTIQUE.md`
+- **P7** : Rapport métier premium (niveau vrillage) — `docs/P7-RAPPORT-METIER.md`
+- **S8** : Monitoring temps réel — spec à rédiger
+
 ## Statut
 - S0 : ✅ YAML LISI + client générique (`configs/`)
 - S1 : ✅ VALIDÉ — 32+ tests (`systems/s1/`, docs/S1.md)
