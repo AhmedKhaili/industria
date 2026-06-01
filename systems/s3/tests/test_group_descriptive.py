@@ -125,7 +125,7 @@ def test_tie_break_by_cpk() -> None:
             "risk_to_limit_score": 0.01,
         },
     ]
-    ranked = group_descriptive._assign_ranks_and_labels(rows)
+    ranked = group_descriptive.assign_ranks_and_labels(rows)
     assert ranked[0]["group_value"] == "B"
     assert ranked[0]["rank"] == 1
 
@@ -167,7 +167,7 @@ def test_risk_to_limit_score_upper_three_tiers() -> None:
             "risk_to_limit_score": score_au_dessus,
         },
     ]
-    ranked = group_descriptive._assign_ranks_and_labels(rows)
+    ranked = group_descriptive.assign_ranks_and_labels(rows)
     assert [r["group_value"] for r in ranked] == [
         "AU_DESSUS_LTS",
         "PROCHE_LTS",

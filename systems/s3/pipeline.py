@@ -82,7 +82,7 @@ class S3Pipeline:
                 if group_descriptive_blocks:
                     metrics_summary["group_descriptive"] = group_descriptive_blocks
                     pipeline_warnings.extend(
-                        w
+                        group_descriptive.warning_to_str(w)
                         for block in group_descriptive_blocks
                         for w in block.get("warnings") or []
                     )
