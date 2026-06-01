@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING
 import pandas as pd
 
 from systems.s1.client_context import ClientContext
-from systems.s3 import dispatcher, executor, group_ranking, judge
+from systems.s3 import dispatcher, executor, group_descriptive, group_ranking, judge
 from systems.stats_format import enrich_specialist_results_display
 
 if TYPE_CHECKING:
@@ -73,6 +73,20 @@ class S3Pipeline:
             )
             if ranking:
                 metrics_summary["group_ranking"] = ranking
+
+            group_descriptive_blocks: list[dict] = []
+            if group_descriptive.should_run(intent, families_executed):
+                group_descriptive_blocks = group_descriptive.compute_all(
+                    df_propre, intent, self.ctx
+                )
+                if group_descriptive_blocks:
+                    metrics_summary["group_descriptive"] = group_descriptive_blocks
+                    pipeline_warnings.extend(
+                        w
+                        for block in group_descriptive_blocks
+                        for w in block.get("warnings") or []
+                    )
+
             if families_executed:
                 metrics_summary["families_executed"] = families_executed
             if family_warnings:
@@ -86,6 +100,7 @@ class S3Pipeline:
             return {
                 "specialist_results": results,
                 "group_ranking": ranking,
+                "group_descriptive": group_descriptive_blocks,
                 "metrics_summary": metrics_summary,
                 "families_executed": families_executed,
                 "analysis_family_warnings": family_warnings,
