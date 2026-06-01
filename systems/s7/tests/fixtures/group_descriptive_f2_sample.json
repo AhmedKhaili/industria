@@ -1,0 +1,128 @@
+{
+  "group_descriptive": [
+    {
+      "variable": "DIA_01",
+      "group_by": "Machine",
+      "level": "aggregated_unit",
+      "ranking_method": "pct_hors_tol_then_cpk_then_risk_to_limit",
+      "worse_direction": "upper",
+      "rows": [
+        {
+          "group_value": "M2",
+          "n": 4,
+          "mean": 20.025,
+          "median": 20.025,
+          "std": 0.035,
+          "min": 20.0,
+          "max": 20.05,
+          "q1": 20.0125,
+          "q3": 20.0375,
+          "iqr": 0.025,
+          "out_of_tolerance_count": 4,
+          "out_of_tolerance_rate": 100.0,
+          "ci95_mean": {"low": 19.99, "high": 20.06, "label": "[19,99 ; 20,06]"},
+          "ci95_out_of_tolerance_rate": {
+            "low": 51.0,
+            "high": 100.0,
+            "label": "[51,0 % ; 100,0 %]",
+            "method": "wilson_score"
+          },
+          "cp": 0.476,
+          "cpk": 0.75,
+          "risk_to_limit_score": 19.875,
+          "rank": 1,
+          "severity_label": "critique",
+          "warnings": []
+        },
+        {
+          "group_value": "M1",
+          "n": 4,
+          "mean": 10.005,
+          "median": 10.005,
+          "std": 0.025,
+          "min": 9.975,
+          "max": 10.035,
+          "q1": 9.99375,
+          "q3": 10.01625,
+          "iqr": 0.0225,
+          "out_of_tolerance_count": 0,
+          "out_of_tolerance_rate": 0.0,
+          "ci95_mean": {"low": 9.98, "high": 10.03, "label": "[9,98 ; 10,03]"},
+          "ci95_out_of_tolerance_rate": {
+            "low": 0.0,
+            "high": 49.0,
+            "label": "[0,0 % ; 49,0 %]",
+            "method": "wilson_score"
+          },
+          "cp": 1.333,
+          "cpk": 1.45,
+          "risk_to_limit_score": -0.095,
+          "rank": 2,
+          "severity_label": "favorable",
+          "warnings": []
+        }
+      ],
+      "best_group": "M1",
+      "worst_group": "M2",
+      "interpretation_limits": "Les écarts entre groupes sont des associations statistiques au niveau unité métier agrégée ; ils ne démontrent pas à eux seuls une causalité directe.",
+      "warnings": [
+        {
+          "code": "aggregation_level_aggregated_unit",
+          "unit_id": "lot_unitaire",
+          "unit_column": "Lot_ID"
+        }
+      ],
+      "aggregation": {
+        "applied": true,
+        "fallback_used": false,
+        "unit_id": "lot_unitaire",
+        "unit_column": "Lot_ID",
+        "value_aggregation": "mean",
+        "tolerance_level": "aggregated_unit",
+        "min_observations_per_unit": 2,
+        "trace": {"units_total": 4, "units_kept": 4, "units_excluded_insufficient_obs": 0}
+      }
+    },
+    {
+      "variable": "DIA_01",
+      "group_by": "Machine",
+      "level": "measure",
+      "ranking_method": "pct_hors_tol_then_cpk_then_risk_to_limit",
+      "worse_direction": "upper",
+      "rows": [
+        {
+          "group_value": "M2",
+          "n": 8,
+          "mean": 20.02,
+          "out_of_tolerance_rate": 100.0,
+          "cpk": 0.72,
+          "rank": 1,
+          "severity_label": "critique",
+          "warnings": ["effectif_faible_n_8_inferieur_30"]
+        },
+        {
+          "group_value": "M1",
+          "n": 8,
+          "mean": 10.01,
+          "out_of_tolerance_rate": 0.0,
+          "cpk": 1.4,
+          "rank": 2,
+          "severity_label": "favorable",
+          "warnings": []
+        }
+      ],
+      "best_group": "M1",
+      "worst_group": "M2",
+      "interpretation_limits": "Les écarts entre groupes sont des associations statistiques au niveau mesure.",
+      "warnings": ["Statistiques calculees au niveau mesure (une ligne par mesure capteur)."],
+      "aggregation": {"applied": false, "fallback_used": false}
+    }
+  ],
+  "intent": {
+    "piece": "P-A100",
+    "operation": "USINAGE",
+    "group_by": "Machine",
+    "variables": ["DIA_01"],
+    "intention": "comparaison_groupes"
+  }
+}
