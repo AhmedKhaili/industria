@@ -1,7 +1,7 @@
 # P7-F2 compact — Spec formelle (Phase B)
 
 > **Statut** : SPEC — à valider avant implémentation Phase C  
-> **Version** : 1.0 — 2026-06-02  
+> **Version** : 1.1 — 2026-06-02 (verrouillage libellés YAML + groupes non exploités)  
 > **Remplace** : tunnel `narratif_metier` long (P7-F2a–c, gelé via `f2_narratif_enabled: false`)  
 > **Référence métier** : rapport vrillage (4 p., dense, quali × quanti)  
 > **Non-cible** : rapport portrait F1 (une variable, pas de facteur qualitatif)
@@ -36,6 +36,47 @@ Objectifs :
 
 ---
 
+## 1.1 Libellés métier, titre et question
+
+Les libellés affichés dans le rapport F2 compact proviennent **uniquement** de :
+
+| Source autorisée | Exemples YAML / intent |
+|------------------|------------------------|
+| YAML client | `pieces.*.operations.*.tags.*` (libellé tag, nominal, LTI/LTS, unité) |
+| Labels / tags métier configurés | `colonnes_libelles`, alias documentaires explicites |
+| Libellés de colonnes / facteurs | `entites.facteurs_analyse.*.description`, `friendly_group_label` |
+| Intent utilisateur | `question_originale` ou formulation S1 **reprise telle quelle** si déjà claire |
+
+**Formule cible (synthèse / titre)** :
+
+```text
+Synthèse métier — Comparaison de {label_variable_yaml} selon {label_facteur_yaml}
+```
+
+`{label_variable_yaml}` = libellé configuré du tag ; à défaut, le tag technique (`CR50_INTRADOS_VRILLAGE`).  
+`{label_facteur_yaml}` = libellé du facteur (`matrice`, `machine`, etc.) — jamais une paraphrase inventée.
+
+**Exemple valide** (libellés YAML ou facteur « matrice » documenté) :
+
+> Synthèse métier — Comparaison du vrillage selon la matrice
+
+**Exemple interdit** :
+
+> Comparer le vrillage à 50 % de corde (CR50_INTRADOS_VRILLAGE)…
+
+…si « 50 % de corde » n’apparaît **nulle part** dans le YAML client (tag, groupe de variables, alias).
+
+**Interdit** :
+
+- Inventer une paraphrase métier absente de la config.
+- Transformer automatiquement un tag (`CR50_INTRADOS_VRILLAGE`) en formulation physique (« 50 % de corde », « intrados », etc.) sans entrée YAML explicite.
+- Laisser S1/S5 **inventer** ou **enrichir** un titre métier non présent dans le YAML pour le corps du PDF F2 compact (S7 Phase C v1 = templates Python sans reformulation LLM).
+- Utiliser le libellé vrillage de référence (`Vrillage_Libre_S50`) si ce n’est pas un alias YAML du client.
+
+**Cover — question affichée** : reprendre `intent.question` / question originale **sans réécriture** ; si absent, une ligne générée uniquement à partir des libellés YAML ci-dessus (pas de texte S5).
+
+---
+
 ## 2. Structure exacte du rapport compact
 
 Ordre fixe des sections (11 blocs logiques ; regroupement renderer autorisé pour densité) :
@@ -54,8 +95,9 @@ Ordre fixe des sections (11 blocs logiques ; regroupement renderer autorisé pou
 | 10 | **Test statistique** | Kruskal/ANOVA + p-value ; Dunn en annexe courte si sig. | `specialist_results` |
 | 11 | **Lecture métier** | **3 blocs max** : priorité / intermédiaires (synthèse) / favorable ou « à confirmer » | Templates sur rows filtrées |
 | 12 | **Verdict métier** | **3 paragraphes** ; hiérarchie **≤ 5** groupes filtrés ; pas de liste 17 puces | Rows filtrées |
-| 13 | **Limite d’interprétation** | Texte fixe association ≠ causalité | `group_descriptive.interpretation_limits` |
-| 14 | **Traçabilité** | SHA-256, version, contrôle chiffres | A3 |
+| 13 | **Groupes non exploités** | Liste des groupes exclus + motif (voir §4.3) — **hors** conclusion et verdict | `group_descriptive.rows[]` exclues |
+| 14 | **Limite d’interprétation** | Texte fixe association ≠ causalité | `group_descriptive.interpretation_limits` |
+| 15 | **Traçabilité** | SHA-256, version, contrôle chiffres ; peut dupliquer la liste §13 en annexe | A3 |
 
 **Page cible** : 4–6 pages A4 avec tableau top-N (4–6 groupes), pas d’annexe Dunn longue en v1 client.
 
@@ -74,7 +116,7 @@ Un groupe entre dans l’ensemble **fiable** (`rows_reliable`) si **toutes** les
 
 Si **aucun** groupe fiable : rapport **dégénéré** — message « Données insuffisantes pour comparer les groupes de façon fiable », tableau vide, verdict **SURVEILLANCE** ou **GO** avec limite explicite (pas de NO-GO sur des chiffres non fiables).
 
-**Groupe prioritaire (pire)** : première row fiable par `rank` (severity `critique` ou pire rang).
+**Groupe prioritaire (pire)** : première row **fiable** par `rank`. Les champs S3 `worst_group` / `best_group` ne sont utilisés que s’ils désignent un groupe **fiable** ; sinon recalcul sur `rows_reliable` uniquement.
 
 **Groupe favorable** : dernière row fiable par `rank` **seulement si** `n` ≥ seuil favorable (YAML, ≥ seuil minimal) ; sinon section « référence à confirmer » **absente** du verdict principal.
 
@@ -91,7 +133,7 @@ Si **aucun** groupe fiable : rapport **dégénéré** — message « Données in
 
 **Règle** : S7 **ne hardcode pas** `n < 6` ; il lit seuils depuis `group_descriptive.aggregation` ou `rapport_pdf.f2_compact.*` ou `dataset.agregation_metier_f2.defaults`.
 
-Rows exclues → **annexe traçabilité interne** ou footnote « X groupes exclus (effectif insuffisant) » — **pas** dans le tableau principal.
+Rows exclues → section **« Groupes non exploités »** (§4.3) et/ou annexe traçabilité — **jamais** dans le tableau principal, la conclusion clé ou le verdict.
 
 ### 4.2 Exclusion valeurs parasites
 
@@ -103,7 +145,34 @@ Valeurs typiques à exclure (LISI `Ref_Matrice`) : noms opérateurs, codes hors 
 | YAML | `group_value_denylist` optionnel (liste) |
 | S3 | Si absent, warning S3 `invalid_group_value` (Phase ultérieure) — **Phase C v1** : filtre YAML côté S7 assembleur uniquement |
 
-**Interdit dans tableau principal et verdict** : `PAIROYS ALAIN`, `LANDIER THOMAS`, `M664520` (n=1), tout groupe non conforme au pattern.
+**Interdit dans tableau principal, conclusion clé, indicateurs clés et verdict** : `PAIROYS ALAIN`, `LANDIER THOMAS`, `M664520` (n=1), tout groupe non conforme au pattern.
+
+### 4.3 Groupes non exploités
+
+Section dédiée, **séparée** du tableau principal (§5) et du verdict métier (§9).
+
+**Emplacement autorisé** :
+
+- Bloc PDF « Groupes non exploités » (recommandé, après verdict ou avant limites) ;
+- Annexe de traçabilité (liste complète acceptable si le bloc principal est tronqué).
+
+**Contenu obligatoire par groupe exclu** :
+
+| Colonne | Description |
+|---------|-------------|
+| `group_value` | Valeur brute du facteur |
+| `n` | Effectif S3 |
+| Motif d’exclusion | Une valeur parmi : `effectif_insuffisant`, `valeur_manquante`, `pattern_yaml_non_respecte`, `groupe_parasite`, `warning_s3_autre` (+ détail texte du warning S3 si présent) |
+
+**Compteur** : « N groupes non exploités sur M groupes détectés » — sans nommer ces groupes ailleurs.
+
+**Interdit** :
+
+- Mentionner **nommativement** un groupe exclu dans la **conclusion clé** (§6).
+- Utiliser un groupe exclu dans `worst_group`, `best_group`, indicateurs clés ou référence favorable.
+- Utiliser un groupe exclu dans le **verdict métier** (§9) ou la **lecture métier** prioritaire (§11).
+- Mélanger des groupes exclus dans le **tableau principal** ou la **fiabilité statistique** (§8).
+- Footnote sous le tableau principal seule à la place de la section (le compteur footnote est optionnel en **plus** de §4.3, pas en remplacement).
 
 ---
 
@@ -145,11 +214,13 @@ Synthèse métier — Influence de {facteur} sur {variable_libelle}
 Variable analysée : {tag}   Nominal : {nominal}   Tolérance : [{lti} ; {lts}] {unité}
 ```
 
-**Bloc 3 — Conclusion clé** (2–4 phrases, ≤ 120 mots) :
+**Bloc 3 — Conclusion clé** (2–4 phrases, ≤ 120 mots) — **groupes fiables uniquement** :
 
 1. **Constat** : groupe le plus critique + % HT **ou** moyenne proche limite + Cpk si disponible.
 2. **Contraste** : meilleur groupe fiable **uniquement si** seuil favorable atteint ; sinon phrase « aucun groupe de référence fiable identifié ».
 3. **Prudence** : une phrase si niveau `measure` vs référence OF agrégée.
+
+Aucun nom de groupe **non exploité** (§4.3) dans ce bloc.
 
 **Interdit** (leçons F2c raté) :
 
@@ -273,8 +344,10 @@ Seuils : **YAML** `recommandations.seuils_cpk`, `rapport_pdf.verdict_*` — jama
 5. Règle métier hardcodée (seuils n, regex LISI en Python).
 6. Groupe n=1 ou parasite en tête de tableau ou verdict.
 7. Double source de vérité verdict (S6 P1 vs group_descriptive).
-8. Renderer custom Phase C v1 — assembler produit des blocs ; renderer existant étendu minimalement **après** validation spec + JSON blocs.
-9. Réactivation `narratif_metier` par défaut.
+8. Paraphrase métier ou titre non présent dans le YAML (§1.1).
+9. Groupe exclu cité dans conclusion clé, verdict ou tableau principal (§4.3).
+10. Renderer custom Phase C v1 — assembler produit des blocs ; renderer existant étendu minimalement **après** validation spec + JSON blocs.
+11. Réactivation `narratif_metier` par défaut.
 
 ---
 
@@ -306,6 +379,7 @@ Seuils : **YAML** `recommandations.seuils_cpk`, `rapport_pdf.verdict_*` — jama
 ## 15. Validation requise
 
 - [ ] Ahmed valide structure §2 et règles filtrage §3–5  
+- [ ] Ahmed valide §1.1 (libellés YAML) et §4.3 (groupes non exploités)  
 - [ ] Pattern `Ref_Matrice` LISI défini en YAML  
 - [ ] Seuils verdict F2 alignés vrillage (% HT OF vs mesure) documentés par client  
 - [ ] Go Phase C implémentation (S7 assembler only, pas S3/renderer v1)
