@@ -224,18 +224,28 @@ def interpretation_limits_paragraphs(
     generated: list[str] = []
     if analysis_level == "measure":
         generated.append(
-            "Analyse au niveau mesure brute : la variabilité intra-unité métier "
-            "n'est pas isolée dans ce tableau."
+            "Analyse au niveau mesure capteur : chaque point correspond à une "
+            "mesure individuelle ; la variabilité intra-unité métier n'est pas "
+            "isolée dans ce rapport."
         )
-    if measure_annex_available and analysis_level == "aggregated_unit":
         generated.append(
-            "Un détail au niveau mesure brute peut être consulté en annexe "
-            "lorsqu'il est disponible dans la sortie S3."
+            "Les taux hors tolérance et Cpk affichés portent sur les mesures "
+            "brutes, et non sur des unités métier agrégées."
         )
-    generated.append(
-        "Le taux hors tolérance principal affiché concerne les unités métier "
-        "agrégées lorsque l'agrégation S3 a été appliquée."
-    )
+    elif analysis_level == "aggregated_unit":
+        generated.append(
+            "Analyse au niveau unité métier agrégée : les indicateurs portent "
+            "sur des unités regroupées (ex. ordre de fabrication, lot)."
+        )
+        generated.append(
+            "Le taux hors tolérance principal affiché concerne les unités "
+            "métier agrégées."
+        )
+        if measure_annex_available:
+            generated.append(
+                "Un détail au niveau mesure brute peut être consulté en annexe "
+                "lorsqu'il est disponible dans la sortie S3."
+            )
     for p in generated:
         assert_no_causality_abuse(p)
     return paragraphs + generated

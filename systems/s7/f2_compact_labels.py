@@ -23,23 +23,27 @@ def resolve_variable_label(
         if piece and operation:
             tol = context.get_tolerance(str(piece), str(operation), variable)
             if isinstance(tol, dict):
-                for key in ("libelle", "label", "nom", "description"):
+                for key in ("libelle_court", "libelle", "label", "nom", "description"):
                     val = tol.get(key)
                     if val:
                         return str(val)
     if context is not None:
-        operation = str(intent.get("operation") or "")
         groups = getattr(context, "entites_variables", {}) or {}
-        op_groups = groups.get(operation, {}) if isinstance(groups, dict) else {}
-        if isinstance(op_groups, dict):
-            for group_cfg in op_groups.values():
-                if not isinstance(group_cfg, dict):
+        if isinstance(groups, dict):
+            op_keys = [str(intent.get("operation") or "")] if intent.get("operation") else list(groups.keys())
+            for op_key in op_keys:
+                op_groups = groups.get(op_key, {}) if op_key else {}
+                if not isinstance(op_groups, dict):
                     continue
-                pattern = str(group_cfg.get("pattern_tag") or "")
-                if pattern and _tag_matches_pattern(variable, pattern):
-                    desc = group_cfg.get("description")
-                    if desc:
-                        return str(desc)
+                for group_cfg in op_groups.values():
+                    if not isinstance(group_cfg, dict):
+                        continue
+                    pattern = str(group_cfg.get("pattern_tag") or "")
+                    if pattern and _tag_matches_pattern(variable, pattern):
+                        for key in ("libelle_court", "libelle", "label", "description"):
+                            val = group_cfg.get(key)
+                            if val:
+                                return str(val)
     return variable
 
 
@@ -50,9 +54,11 @@ def resolve_factor_label(
 ) -> str:
     """Libellé facteur depuis entites.facteurs_analyse ou friendly_group_label."""
     factor_cfg = _find_factor_config(context, group_by)
-    desc = factor_cfg.get("description") if factor_cfg else None
-    if desc:
-        return str(desc)
+    if factor_cfg:
+        for key in ("libelle_court", "libelle", "label", "description"):
+            val = factor_cfg.get(key)
+            if val:
+                return str(val)
     from systems.s5.prep import friendly_group_label
 
     return friendly_group_label(group_by, intent)

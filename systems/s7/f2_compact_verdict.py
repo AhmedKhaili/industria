@@ -116,22 +116,22 @@ def compute_compact_verdict(
 
     surveillance_reasons: list[str] = []
     if cpk is not None and p2_cpk is not None and cpk < p2_cpk:
-        surveillance_reasons.append(f"Cpk {cpk:.2f} sous le seuil de surveillance ({p2_cpk:.2f})")
+        surveillance_reasons.append(
+            f"Cpk {cpk:.2f} sous le seuil de surveillance ({p2_cpk:.2f})"
+        )
     if pct is not None and pct > 0:
-        surveillance_reasons.append(f"% HT {pct:.1f} > 0")
-    sev = str(worst.get("severity_label") or "").lower()
-    if sev in ("critique", "surveillance"):
-        surveillance_reasons.append(f"niveau {sev} sur le groupe prioritaire")
+        surveillance_reasons.append(
+            f"présence de mesures hors tolérance ({pct:.1f} %) — suivi renforcé recommandé"
+        )
 
     if surveillance_reasons:
         key = "SURVEILLANCE"
-        tone = "point_attention" if cpk is not None and p1_cpk is not None and cpk >= p1_cpk else None
         return CompactVerdict(
             verdict_key=key,
             label=_verdict_label(key, cfg),
             banner=prep.verdict_banner(key, cfg),
             rationale=" ; ".join(surveillance_reasons),
-            tone=tone,
+            tone="point_attention",
         )
 
     key = "GO"

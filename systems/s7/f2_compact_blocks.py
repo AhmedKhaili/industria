@@ -242,6 +242,7 @@ def _build_block_map(
         tolerances=tolerances,
         factor_label=factor_label,
         analysis_level_label=level_label,
+        analysis_level=selection.level,
     )
 
     conclusion = {

@@ -31,8 +31,14 @@ def business_synthesis_lines(
     tolerances: dict[str, Any] | None,
     factor_label: str,
     analysis_level_label: str,
+    analysis_level: str = "measure",
 ) -> dict[str, Any]:
     lines: list[str] = [title]
+    if analysis_level == "measure":
+        lines.append(
+            "Analyse au niveau mesure capteur — chaque point correspond "
+            "à une mesure individuelle."
+        )
     var_line = f"Variable analysée : {variable_tag}"
     if variable_label and variable_label != variable_tag:
         var_line += f" ({variable_label})"
@@ -123,7 +129,9 @@ def verdict_bullets_compact(
         suffix = f" ({', '.join(detail)})" if detail else ""
         bullets.append(f"Groupe prioritaire : {worst_group}{suffix}.")
     bullets.append(f"Verdict : {verdict.label}.")
-    if verdict.rationale:
+    if getattr(verdict, "tone", None) == "point_attention":
+        bullets.append("Point d'attention — suivi renforcé recommandé.")
+    elif verdict.rationale:
         bullets.append(verdict.rationale.capitalize() + ".")
     for b in bullets:
         assert_no_causality_abuse(b)

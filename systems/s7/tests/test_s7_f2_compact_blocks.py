@@ -89,14 +89,154 @@ def test_render_mode_f2_compact(compact_doc) -> None:
     assert compact_doc.meta["render_mode"] == "f2_compact"
 
 
-def test_synthesis_title_uses_yaml_labels(compact_doc) -> None:
+def test_synthesis_title_uses_yaml_libelle_court(compact_doc) -> None:
     syn = compact_doc.find("business_synthesis")
     assert syn is not None
     title = syn.data["title"]
-    assert title.startswith("Synthèse métier — Comparaison de ")
-    assert " selon " in title
+    assert title == "Synthèse métier — Comparaison de Variable test selon Facteur test"
+    assert "description longue" not in title.lower()
     assert "50 %" not in title
     assert "corde" not in title.lower()
+
+
+def test_synthesis_framing_measure_level(
+    fixture_payload: dict, ctx: ClientContext
+) -> None:
+    measure_block = {
+        "variable": "VARIABLE_QUANTI_TEST",
+        "group_by": "FACTEUR_QUALI_TEST",
+        "level": "measure",
+        "rows": [
+            {
+                "group_value": "GROUPE_A",
+                "n": 10,
+                "out_of_tolerance_rate": 0.4,
+                "cpk": 1.47,
+                "rank": 1,
+                "warnings": [],
+            },
+        ],
+        "interpretation_limits": "Association statistique — pas causalité directe.",
+        "aggregation": {"applied": False},
+    }
+    cfg = prep.rapport_pdf_config(ctx)
+    cfg["f2_compact"] = fixture_payload["filter_config"]["f2_compact"]
+    doc = build_f2_compact_document(
+        {"group_descriptive": [measure_block]},
+        fixture_payload["intent"],
+        context=ctx,
+        cfg=cfg,
+    )
+    syn = doc.find("business_synthesis")
+    assert syn is not None
+    lines = syn.data["lines"]
+    assert any("mesure capteur" in line for line in lines)
+    assert any("mesure individuelle" in line for line in lines)
+
+
+def test_verdict_surveillance_without_critique_when_cpk_above_p1(
+    ctx: ClientContext,
+) -> None:
+    """severity_label S3 « critique » ne doit pas contaminer le verdict compact."""
+    rows = [
+        {
+            "group_value": "GROUPE_OK",
+            "n": 20,
+            "out_of_tolerance_rate": 0.4,
+            "cpk": 1.47,
+            "rank": 1,
+            "severity_label": "critique",
+            "warnings": [],
+        },
+    ]
+    block = {
+        "variable": "VARIABLE_QUANTI_TEST",
+        "group_by": "FACTEUR_QUALI_TEST",
+        "level": "measure",
+        "rows": rows,
+        "aggregation": {"applied": False},
+    }
+    cfg = prep.rapport_pdf_config(ctx)
+    selection = build_f2_compact_selection(
+        {"group_descriptive": [block]},
+        {"variables": ["VARIABLE_QUANTI_TEST"], "group_by": "FACTEUR_QUALI_TEST"},
+        context=ctx,
+        cfg=cfg,
+    )
+    verdict = compute_compact_verdict(selection, ctx, cfg)
+    assert verdict.verdict_key == "SURVEILLANCE"
+    assert "critique" not in verdict.rationale.lower()
+    assert verdict.tone == "point_attention"
+
+
+def test_no_go_only_when_yaml_threshold_crossed(ctx: ClientContext) -> None:
+    cfg = prep.rapport_pdf_config(ctx)
+    rows = [
+        {
+            "group_value": "GROUPE_LIMITE",
+            "n": 10,
+            "out_of_tolerance_rate": 0.0,
+            "cpk": 1.05,
+            "rank": 1,
+            "severity_label": "critique",
+            "warnings": [],
+        },
+    ]
+    block = {
+        "variable": "VARIABLE_QUANTI_TEST",
+        "group_by": "FACTEUR_QUALI_TEST",
+        "level": "measure",
+        "rows": rows,
+    }
+    selection = build_f2_compact_selection(
+        {"group_descriptive": [block]},
+        {"variables": ["VARIABLE_QUANTI_TEST"], "group_by": "FACTEUR_QUALI_TEST"},
+        context=ctx,
+        cfg=cfg,
+    )
+    verdict = compute_compact_verdict(selection, ctx, cfg)
+    assert verdict.verdict_key != "NO_GO"
+    assert "critique" not in verdict.rationale.lower()
+
+
+def test_interpretation_limits_measure_without_aggregated_phrase(
+    fixture_payload: dict, ctx: ClientContext
+) -> None:
+    measure_block = {
+        "variable": "VARIABLE_QUANTI_TEST",
+        "group_by": "FACTEUR_QUALI_TEST",
+        "level": "measure",
+        "ranking_method": "pct_hors_tol_then_cpk_then_risk_to_limit",
+        "worse_direction": "upper",
+        "rows": [
+            {
+                "group_value": "GROUPE_A",
+                "n": 10,
+                "mean": 0.1,
+                "out_of_tolerance_rate": 0.4,
+                "cpk": 1.47,
+                "rank": 1,
+                "severity_label": "surveillance",
+                "warnings": [],
+            },
+        ],
+        "interpretation_limits": "Association statistique — pas causalité directe.",
+        "aggregation": {"applied": False},
+    }
+    cfg = prep.rapport_pdf_config(ctx)
+    cfg["f2_compact"] = fixture_payload["filter_config"]["f2_compact"]
+    doc = build_f2_compact_document(
+        {"group_descriptive": [measure_block]},
+        fixture_payload["intent"],
+        context=ctx,
+        cfg=cfg,
+    )
+    limits = doc.find("interpretation_limits")
+    assert limits is not None
+    text = "\n".join(limits.data.get("paragraphs") or [])
+    assert "mesure capteur" in text.lower()
+    assert "concernent les unités métier agrégées" not in text.lower()
+    assert "l'agrégation s3 a été appliquée" not in text.lower()
 
 
 def test_verdict_no_go_for_clear_critical_group(
@@ -155,6 +295,7 @@ def test_verdict_surveillance_not_no_go_for_mild_profile(ctx: ClientContext) -> 
     verdict = compute_compact_verdict(selection, ctx, cfg)
     assert verdict.verdict_key in ("GO", "SURVEILLANCE")
     assert verdict.verdict_key != "NO_GO"
+    assert "critique" not in verdict.rationale.lower()
 
 
 def test_excluded_groups_only_in_excluded_block(compact_doc) -> None:

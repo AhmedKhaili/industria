@@ -152,6 +152,7 @@ entites:
     EQUATOR:
       matrice:
         description: "référence de la matrice de formage utilisée lors du contrôle métrologique EQUATOR"
+        libelle_court: "Matrice"
         colonne: "Ref_Matrice"
         synonymes: [moule, ref matrice, référence matrice, outil de formage, matrice de formage]
     COMMUN:
@@ -204,6 +205,7 @@ entites:
           - forme de l'aube
       vrillage:
         description: "vrillage ou torsion angulaire de l'aube mesurée lors du contrôle EQUATOR"
+        libelle_court: "Vrillage intrados CR50"
         pattern_tag: "*_INTRADOS_VRILLAGE"
         unite: "mm"
         synonymes: [torsion, twist, vrillage intrados, angle vrillage]

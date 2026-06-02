@@ -67,6 +67,12 @@ entites:
         description: "fournisseur matiere"
         colonne: "Fournisseur"
         synonymes: [fournisseur, origine]
+    TEST:
+      facteur_quali:
+        description: "description longue facteur qualitatif de test pour generic"
+        libelle_court: "Facteur test"
+        colonne: "FACTEUR_QUALI_TEST"
+        synonymes: [facteur quali test]
   groupes_variables:
     USINAGE:
       diametre:
@@ -78,6 +84,12 @@ entites:
         description: "rugosite mesuree"
         pattern_tag: "RUG_*"
         synonymes: [rugosite, rugosité]
+    TEST:
+      variable_quanti:
+        description: "description longue variable quanti de test pour generic"
+        libelle_court: "Variable test"
+        pattern_tag: "VARIABLE_QUANTI_*"
+        synonymes: [variable quanti test]
   intentions:
     conformite:
       description: "conformite aux tolerances"
