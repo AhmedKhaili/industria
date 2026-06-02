@@ -313,7 +313,7 @@ def run(
 
         render_mode_requested = prep.resolve_render_mode(intent, cfg)
         f2_plan = resolve_f2_narratif_plan(
-            render_mode_requested, intent, s3_output, context
+            render_mode_requested, intent, s3_output, context, cfg
         )
 
         if f2_plan["use_f2"]:

@@ -1,7 +1,9 @@
 # P7 — Rapport métier premium
 
-> **Statut** : SPEC — à valider avant implémentation  
-> **Version** : 1.0 — 2026-05-28  
+> **Statut** : **P7-F2 narratif gelé** (2026-06-02) — `rapport_pdf.f2_narratif_enabled: false` par défaut.  
+> Le tunnel `render_mode: narratif_metier` (9+ blocs longs) reste en code dormant pour tests expérimentaux uniquement.  
+> **Prochaine cible validée** : **F2 compact façon vrillage** — spec formelle : [`P7-F2-COMPACT-SPEC.md`](P7-F2-COMPACT-SPEC.md) (Phase B ; implémentation Phase C après validation).  
+> **Version doc** : 1.1 — 2026-06-02  
 > **Dépend de** : `docs/P6-CARTOGRAPHIE-ANALYTIQUE.md` (sorties structurées par famille)  
 > **Prérequis** : `docs/PHILOSOPHY.md`, `docs/S7.md`, layout P4 existant (`systems/s7/`)  
 > **Ne pas confondre** : **P5** = extensions statistiques (η²) — voir `docs/S3-extended.md`
@@ -77,7 +79,9 @@ Extension des `block_type` S7 (`systems/s7/document.py`).
 
 ## 5. Deux modes de rendu
 
-### 5.1 `render_mode: narratif_metier` (cible vrillage)
+> **Note** : §5.1 narratif_metier est **gelé** tant que `rapport_pdf.f2_narratif_enabled` est `false` (défaut produit). Voir §5.4 pour la cible F2 compact.
+
+### 5.1 `render_mode: narratif_metier` (expérimental — gelé)
 
 Ordre des sections :
 
@@ -122,10 +126,38 @@ Ordre conservé pour traçabilité formelle :
 |---------|------|
 | `intent.rapport_mode` explicite | prioritaire |
 | `rapport_pdf.default_mode` dans YAML | défaut client |
-| `intention` ∈ {portrait, analyse_complete, diagnostic_causal} + profil technicien | `narratif_metier` |
+| `intention` ∈ {portrait, analyse_complete, diagnostic_causal} + profil technicien | `narratif_metier` **si** `f2_narratif_enabled: true` |
 | Demande audit / directeur | `audit_en9100` |
+| `comparaison_groupes` + `rapport_mode: narratif_metier` | **audit** si `f2_narratif_enabled: false` (défaut) |
 
-**Implémentation** : `prep.resolve_render_mode(intent, context, profile)` → `a1_assembler` ordonne les blocs.
+**Implémentation** : `prep.resolve_render_mode(intent, cfg)` + `prep.is_f2_narratif_enabled(cfg)` → `a1_assembler` ordonne les blocs.
+
+### 5.4 F2 compact façon vrillage (cible Phase C)
+
+Spec formelle Phase B : **[`P7-F2-COMPACT-SPEC.md`](P7-F2-COMPACT-SPEC.md)** (structure, filtrage, verdict, interdictions).
+
+Résumé :
+
+1. Synthèse métier  
+2. Conclusion clé  
+3. Contexte de l'analyse  
+4. Indicateurs clés  
+5. Tableau groupes/matrices **fiables** (filtré)  
+6. Lecture Cp/Cpk simple  
+7. Fiabilité statistique  
+8. Lecture métier (synthèse, sans boucle groupe par groupe)  
+9. Verdict métier  
+10. Limite d'interprétation  
+11. Traçabilité  
+
+**Règles** : chiffres uniquement depuis S3 / `group_descriptive` ; filtrage effectif insuffisant et valeurs parasites avant verdict ; seuils YAML ; pas de n=1 en référence favorable ; pas de causalité abusive.
+
+**Activation narratif expérimental (déconseillé prod)** :
+
+```yaml
+rapport_pdf:
+  f2_narratif_enabled: true   # défaut false — narratif long P7-F2a–c
+```
 
 ---
 

@@ -9,7 +9,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
-from systems.s7 import f2_pedagogy, f2_templates
+from systems.s7 import f2_pedagogy, f2_templates, prep
 
 _F2_INTENTIONS = frozenset(
     {"comparaison_groupes", "diagnostic_causal", "analyse_complete"}
@@ -674,6 +674,7 @@ def resolve_f2_narratif_plan(
     intent: dict,
     s3_output: dict,
     context: Any,
+    cfg: dict | None = None,
 ) -> dict[str, Any]:
     """
     Décide si le rapport utilise le narratif F2 ou retombe en audit.
@@ -682,6 +683,13 @@ def resolve_f2_narratif_plan(
     """
     if render_mode_requested != "narratif_metier":
         return {"use_f2": False, "skipped_reason": None, "bundle": None}
+
+    if not prep.is_f2_narratif_enabled(cfg or {}):
+        return {
+            "use_f2": False,
+            "skipped_reason": "f2_narratif_disabled",
+            "bundle": None,
+        }
 
     if not is_f2_intention_eligible(intent):
         return {

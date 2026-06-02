@@ -85,10 +85,38 @@ def _minimal_s5_s6() -> tuple[dict, dict]:
 def test_resolve_render_mode_default_audit(ctx: ClientContext) -> None:
     cfg = prep.rapport_pdf_config(ctx)
     assert prep.resolve_render_mode({"intention": "comparaison_groupes"}, cfg) == "audit_en9100"
+    assert prep.is_f2_narratif_enabled(cfg) is False
+
+
+def test_narratif_disabled_by_default(
+    ctx: ClientContext, fixture_payload: dict
+) -> None:
+    """Phase A — narratif F2 gelé : intent narratif_metier → audit simple."""
+    s3 = {"group_descriptive": fixture_payload["group_descriptive"]}
+    intent = {
+        **fixture_payload["intent"],
+        "rapport_mode": "narratif_metier",
+    }
+    s5, s6 = _minimal_s5_s6()
+    out = a1_assembler.run(
+        "Comparaison machines ?",
+        intent,
+        s3,
+        _minimal_s4(),
+        s5,
+        s6,
+        ctx,
+        "technicien",
+    )
+    doc = out["document"]
+    assert "conclusion_key" not in doc.block_types()
+    assert "executive" in doc.block_types()
+    assert doc.meta.get("render_mode") == "audit_en9100"
+    assert doc.meta.get("f2_narratif_skipped") == "f2_narratif_disabled"
 
 
 def test_narratif_metier_blocks_present(
-    ctx: ClientContext, fixture_payload: dict
+    ctx: ClientContext, fixture_payload: dict, enable_f2_narratif: None
 ) -> None:
     s3 = {"group_descriptive": fixture_payload["group_descriptive"]}
     intent = {
@@ -118,7 +146,9 @@ def test_narratif_metier_blocks_present(
     assert "f2_narratif_skipped" not in doc.meta
 
 
-def test_fallback_no_group_descriptive(ctx: ClientContext) -> None:
+def test_fallback_no_group_descriptive(
+    ctx: ClientContext, enable_f2_narratif: None
+) -> None:
     intent = {
         "piece": "P-A100",
         "operation": "USINAGE",
@@ -145,7 +175,9 @@ def test_fallback_no_group_descriptive(ctx: ClientContext) -> None:
     assert doc.meta.get("render_mode") == "audit_en9100"
 
 
-def test_fallback_intention_not_eligible(ctx: ClientContext, fixture_payload: dict) -> None:
+def test_fallback_intention_not_eligible(
+    ctx: ClientContext, fixture_payload: dict, enable_f2_narratif: None
+) -> None:
     s3 = {"group_descriptive": fixture_payload["group_descriptive"]}
     intent = {
         "piece": "P-A100",

@@ -27,6 +27,7 @@ _DEFAULT_RAPPORT_PDF = {
     "max_graphiques_complet": 8,
     "max_pages_complet": 12,
     "max_recommandations_client": 4,
+    "f2_narratif_enabled": False,
     "sauvegarder_dans": "reports/",
     "bandeau_defaut_couleur": "#1565C0",
     "boxplots_prioritaires": [],
@@ -115,6 +116,11 @@ _GRAPH_ONLY_RE = re.compile(r"^graphique\s*:", re.I)
 
 
 _RENDER_MODES = frozenset({"audit_en9100", "narratif_metier"})
+
+
+def is_f2_narratif_enabled(cfg: dict) -> bool:
+    """P7-F2 narratif long — désactivé par défaut (expérimental gelé)."""
+    return bool(cfg.get("f2_narratif_enabled", False))
 
 
 def resolve_render_mode(intent: dict, cfg: dict) -> str:

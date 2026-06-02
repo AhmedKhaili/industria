@@ -29,7 +29,23 @@ def ctx() -> ClientContext:
 
 
 @pytest.fixture(scope="module")
-def narratif_document(ctx: ClientContext):
+def _enable_f2_narratif_module():
+    """Patch module-scoped — narratif F2 expérimental pour tests renderer."""
+    original = prep.rapport_pdf_config
+
+    def _wrap(context):
+        cfg = original(context)
+        merged = dict(cfg)
+        merged["f2_narratif_enabled"] = True
+        return merged
+
+    prep.rapport_pdf_config = _wrap
+    yield
+    prep.rapport_pdf_config = original
+
+
+@pytest.fixture(scope="module")
+def narratif_document(ctx: ClientContext, _enable_f2_narratif_module):
     payload = json.loads(FIXTURE.read_text(encoding="utf-8"))
     s3 = {"group_descriptive": payload["group_descriptive"]}
     intent = {**payload["intent"], "rapport_mode": "narratif_metier"}
