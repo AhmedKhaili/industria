@@ -1,0 +1,107 @@
+{
+  "group_descriptive": [
+    {
+      "variable": "VARIABLE_QUANTI_TEST",
+      "group_by": "FACTEUR_QUALI_TEST",
+      "level": "aggregated_unit",
+      "ranking_method": "pct_hors_tol_then_cpk_then_risk_to_limit",
+      "worse_direction": "upper",
+      "worst_group": "GROUPE_FAIBLE",
+      "best_group": "GROUPE_B",
+      "rows": [
+        {
+          "group_value": "GROUPE_A",
+          "n": 8,
+          "mean": 0.33,
+          "out_of_tolerance_rate": 45.0,
+          "cpk": -0.01,
+          "rank": 1,
+          "severity_label": "critique",
+          "warnings": []
+        },
+        {
+          "group_value": "GROUPE_B",
+          "n": 6,
+          "mean": 0.12,
+          "out_of_tolerance_rate": 5.0,
+          "cpk": 0.72,
+          "rank": 2,
+          "severity_label": "surveillance",
+          "warnings": []
+        },
+        {
+          "group_value": "GROUPE_C",
+          "n": 4,
+          "mean": 0.08,
+          "out_of_tolerance_rate": 0.0,
+          "cpk": 1.1,
+          "rank": 3,
+          "severity_label": "favorable",
+          "warnings": []
+        },
+        {
+          "group_value": "GROUPE_FAIBLE",
+          "n": 1,
+          "mean": 0.02,
+          "out_of_tolerance_rate": 0.0,
+          "cpk": null,
+          "rank": 4,
+          "severity_label": "favorable",
+          "warnings": ["effectif_faible_n_1_inferieur_3"]
+        },
+        {
+          "group_value": "HORS_PATTERN_X",
+          "n": 12,
+          "mean": 0.15,
+          "out_of_tolerance_rate": 2.0,
+          "cpk": 0.5,
+          "rank": 5,
+          "severity_label": "surveillance",
+          "warnings": []
+        },
+        {
+          "group_value": "OPERATEUR_X",
+          "n": 20,
+          "mean": 0.2,
+          "out_of_tolerance_rate": 1.0,
+          "cpk": 0.4,
+          "rank": 6,
+          "severity_label": "surveillance",
+          "warnings": []
+        }
+      ],
+      "interpretation_limits": "Association statistique — pas causalité directe.",
+      "aggregation": {
+        "applied": true,
+        "min_units_per_group": 3,
+        "unit_id": "lot_test",
+        "unit_column": "Lot_Test"
+      }
+    },
+    {
+      "variable": "VARIABLE_QUANTI_TEST",
+      "group_by": "FACTEUR_QUALI_TEST",
+      "level": "measure",
+      "rows": [
+        {
+          "group_value": "GROUPE_A",
+          "n": 100,
+          "rank": 1,
+          "warnings": []
+        }
+      ]
+    }
+  ],
+  "intent": {
+    "intention": "comparaison_groupes",
+    "variables": ["VARIABLE_QUANTI_TEST"],
+    "group_by": "FACTEUR_QUALI_TEST"
+  },
+  "filter_config": {
+    "f2_compact": {
+      "group_value_pattern": "^GROUPE_[A-Z0-9_]+$",
+      "group_value_denylist": ["OPERATEUR_X"],
+      "min_n_measure": 5
+    }
+  }
+}

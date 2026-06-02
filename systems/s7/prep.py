@@ -28,6 +28,7 @@ _DEFAULT_RAPPORT_PDF = {
     "max_pages_complet": 12,
     "max_recommandations_client": 4,
     "f2_narratif_enabled": False,
+    "f2_compact_enabled": False,
     "sauvegarder_dans": "reports/",
     "bandeau_defaut_couleur": "#1565C0",
     "boxplots_prioritaires": [],
@@ -121,6 +122,17 @@ _RENDER_MODES = frozenset({"audit_en9100", "narratif_metier"})
 def is_f2_narratif_enabled(cfg: dict) -> bool:
     """P7-F2 narratif long — désactivé par défaut (expérimental gelé)."""
     return bool(cfg.get("f2_narratif_enabled", False))
+
+
+def is_f2_compact_enabled(cfg: dict) -> bool:
+    """P7-F2 compact façon vrillage — désactivé par défaut jusqu'à Phase C."""
+    return bool(cfg.get("f2_compact_enabled", False))
+
+
+def f2_compact_config(cfg: dict) -> dict[str, Any]:
+    """Sous-config rapport_pdf.f2_compact (seuils filtrage présentation)."""
+    raw = cfg.get("f2_compact")
+    return dict(raw) if isinstance(raw, dict) else {}
 
 
 def resolve_render_mode(intent: dict, cfg: dict) -> str:
