@@ -745,27 +745,57 @@ def render_pdf(
                 note = data.get("measure_annex_note")
                 if note:
                     story.append(Paragraph(clean(str(note)), styles["body"]))
-                for grp in data.get("groups") or []:
-                    if not isinstance(grp, dict):
-                        continue
-                    gv = clean(str(grp.get("group_value", "")))
-                    story.append(Paragraph(f"<b>{gv}</b>", styles["body"]))
-                    ci_m = grp.get("ci95_mean")
-                    if isinstance(ci_m, dict) and ci_m.get("label"):
-                        story.append(
-                            Paragraph(
-                                f"IC95 moyenne : {clean(str(ci_m['label']))}",
-                                styles["body"],
-                            )
+                rel_cols = list(data.get("columns") or [])
+                rel_rows = list(data.get("rows") or [])
+                if rel_cols and rel_rows:
+                    cap_style = ParagraphStyle(
+                        "reliability_cell",
+                        parent=styles["caption"],
+                        fontSize=7,
+                        leading=9,
+                    )
+                    table_rows: list[list[Any]] = [
+                        [
+                            Paragraph(f"<b>{clean(str(c))}</b>", cap_style)
+                            for c in rel_cols
+                        ]
+                    ]
+                    for row in rel_rows:
+                        if not isinstance(row, dict):
+                            continue
+                        table_rows.append(
+                            [
+                                Paragraph(
+                                    clean(str(row.get(c, "—"))),
+                                    cap_style,
+                                )
+                                for c in rel_cols
+                            ]
                         )
-                    ci_p = grp.get("ci95_out_of_tolerance_rate")
-                    if isinstance(ci_p, dict) and ci_p.get("label"):
-                        story.append(
-                            Paragraph(
-                                f"IC95 % hors tol. : {clean(str(ci_p['label']))}",
-                                styles["body"],
-                            )
+                    widths = [
+                        _CONTENT_WIDTH * w
+                        for w in (0.18, 0.06, 0.1, 0.14, 0.1, 0.16, 0.08, 0.18)
+                    ]
+                    if len(widths) != len(rel_cols):
+                        widths = [_CONTENT_WIDTH / len(rel_cols)] * len(rel_cols)
+                    tbl = Table(table_rows, colWidths=widths, repeatRows=1)
+                    tbl.setStyle(
+                        TableStyle(
+                            [
+                                ("BACKGROUND", (0, 0), (-1, 0), colors.lightgrey),
+                                ("FONTSIZE", (0, 0), (-1, -1), 7),
+                                ("GRID", (0, 0), (-1, -1), 0.5, colors.lightgrey),
+                                ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                            ]
                         )
+                    )
+                    story.extend([tbl, Spacer(1, 3 * mm)])
+                else:
+                    for grp in data.get("groups") or []:
+                        if not isinstance(grp, dict):
+                            continue
+                        gv = clean(str(grp.get("group_value", "")))
+                        story.append(Paragraph(f"<b>{gv}</b>", styles["body"]))
                 lim = data.get("limits_paragraph")
                 if lim:
                     story.append(Paragraph(clean(str(lim)), styles["body"]))

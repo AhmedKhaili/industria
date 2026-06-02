@@ -289,6 +289,22 @@ def build_boxplot_chart(
         if plot_df.empty:
             return {"error": "Aucune donnée pour le boxplot", "png_bytes": None}
 
+        filter_warning: str | None = None
+        include_groups = intent.get("chart_include_group_values")
+        if group_col and group_col in plot_df.columns and include_groups is not None:
+            if isinstance(include_groups, list):
+                if len(include_groups) == 0:
+                    filter_warning = "chart_include_group_values_empty"
+                else:
+                    allowed = {str(g) for g in include_groups}
+                    plot_df = plot_df[plot_df[group_col].astype(str).isin(allowed)]
+                    if plot_df.empty:
+                        return {
+                            "error": "Aucune donnée pour le boxplot après filtrage groupes",
+                            "png_bytes": None,
+                            "filter_warning": "chart_include_group_values_no_match",
+                        }
+
         unit = _unit_label(context, intent, variable)
         y_title = f"{variable} ({unit})" if unit else variable
         if group_col and group_col in plot_df.columns:
@@ -308,10 +324,15 @@ def build_boxplot_chart(
             yaxis_title=y_title,
         )
         png = report_charts._fig_to_png(fig, 800, 400)
+        groups_plotted: list[str] = []
+        if group_col and group_col in plot_df.columns:
+            groups_plotted = sorted(plot_df[group_col].astype(str).unique().tolist())
         return {
             "error": None,
             "png_bytes": png,
             "description": _chart_description("boxplot", variable, intent, context),
+            "groups_plotted": groups_plotted,
+            "filter_warning": filter_warning,
         }
     except Exception as exc:  # noqa: BLE001
         return {"error": str(exc), "png_bytes": None}

@@ -361,6 +361,51 @@ def test_f2_compact_still_disabled_by_default_in_prep(ctx: ClientContext) -> Non
     assert prep.is_f2_compact_enabled(cfg) is False
 
 
+def test_statistical_reliability_table_structure(
+    fixture_payload: dict, ctx: ClientContext
+) -> None:
+    block = dict(fixture_payload["group_descriptive"][0])
+    block["rows"] = [
+        {
+            **block["rows"][0],
+            "ci95_mean": {"low": 0.3, "high": 0.35, "label": "[0,300 ; 0,350]"},
+            "ci95_out_of_tolerance_rate": {
+                "low": 40.0,
+                "high": 50.0,
+                "label": "[40,0 % ; 50,0 %]",
+            },
+        },
+        {
+            **block["rows"][2],
+            "ci95_mean": None,
+            "ci95_out_of_tolerance_rate": None,
+        },
+    ]
+    cfg = prep.rapport_pdf_config(ctx)
+    cfg["f2_compact"] = fixture_payload["filter_config"]["f2_compact"]
+    doc = build_f2_compact_document(
+        {"group_descriptive": [block]},
+        fixture_payload["intent"],
+        context=ctx,
+        cfg=cfg,
+    )
+    rel = doc.find("statistical_reliability")
+    assert rel is not None
+    cols = rel.data["columns"]
+    assert "IC95 moyenne" in cols
+    assert "IC95 % hors tolérance" in cols
+    assert "Statut fiabilité" in cols
+    rows = rel.data["rows"]
+    assert len(rows) == 2
+    g_a = next(r for r in rows if r["Groupe"] == "GROUPE_A")
+    assert "[0,300 ; 0,350]" in g_a["IC95 moyenne"]
+    assert "[40,0 % ; 50,0 %]" in g_a["IC95 % hors tolérance"]
+    g_c = next(r for r in rows if r["Groupe"] == "GROUPE_C")
+    assert g_c["IC95 moyenne"] == "IC95 non disponible"
+    assert g_c["IC95 % hors tolérance"] == "IC95 non disponible"
+    assert "groups" not in rel.data or not rel.data.get("groups")
+
+
 def test_conclusion_no_robust_favorable_message(compact_doc) -> None:
     """GROUPE_A pire ; GROUPE_C favorable robuste — pas de message d'absence."""
     conclusion = compact_doc.find("conclusion_key")

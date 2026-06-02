@@ -49,6 +49,7 @@ class S7Pipeline:
         *,
         report_renderer: RenderFn | None = None,
         timestamp: str | None = None,
+        df_propre: object = None,
     ) -> dict:
         trace: list[dict] = []
         warnings: list[str] = []
@@ -71,6 +72,7 @@ class S7Pipeline:
                 self.ctx,
                 profile,
                 timestamp=ts,
+                df_propre=df_propre,
             )
             _trace_step(trace, "a1", a1, t0)
             if a1.get("error") or a1.get("document") is None:

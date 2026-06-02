@@ -17,6 +17,7 @@ from systems.s7.f2_compact_labels import (
     synthesis_title,
     tolerances_for_variable,
 )
+from systems.s7.f2_compact_charts import build_compact_chart_items
 from systems.s7.f2_compact_selection import (
     F2CompactSelection,
     build_f2_compact_selection,
@@ -69,6 +70,7 @@ def build_f2_compact_document(
     timestamp: str = "",
     profile: str = "technicien",
     meta_extra: dict[str, Any] | None = None,
+    df_propre: Any = None,
 ) -> ReportDocument:
     """
     Assemble un ReportDocument F2 compact inspectable (C2/C3).
@@ -95,6 +97,13 @@ def build_f2_compact_document(
     title = synthesis_title(variable_label, factor_label)
 
     verdict = compute_compact_verdict(selection, context, cfg)
+    chart_items = build_compact_chart_items(
+        list(chart_items or []),
+        selection,
+        intent,
+        context,
+        df_propre=df_propre,
+    )
     ts = timestamp or prep.utc_timestamp()
     question = question_originale or str(intent.get("question") or "")
 
@@ -569,23 +578,58 @@ def _build_statistical_reliability(
     selection: F2CompactSelection,
     level_label: str,
 ) -> dict[str, Any]:
-    groups_out = [
-        {
-            "group_value": row.get("group_value"),
-            "n": row.get("n"),
-            "ci95_mean": row.get("ci95_mean"),
-            "ci95_out_of_tolerance_rate": row.get("ci95_out_of_tolerance_rate"),
-            "warnings": list(row.get("warnings") or []),
-        }
-        for row in rows
-    ]
+    table_rows: list[dict[str, Any]] = []
+    for row in rows:
+        table_rows.append(
+            {
+                "Groupe": row.get("group_value"),
+                "n": row.get("n"),
+                "Moyenne": _fmt_num(row.get("mean")),
+                "IC95 moyenne": _ci95_display(row.get("ci95_mean")),
+                "% hors tolérance": _fmt_pct(row.get("out_of_tolerance_rate")),
+                "IC95 % hors tolérance": _ci95_display(
+                    row.get("ci95_out_of_tolerance_rate")
+                ),
+                "Cpk": _fmt_num(row.get("cpk")),
+                "Statut fiabilité": _reliability_status(row),
+            }
+        )
     return {
         "title": "Fiabilité statistique",
         "analysis_level": selection.level,
         "analysis_level_label": level_label,
-        "groups": groups_out,
+        "columns": [
+            "Groupe",
+            "n",
+            "Moyenne",
+            "IC95 moyenne",
+            "% hors tolérance",
+            "IC95 % hors tolérance",
+            "Cpk",
+            "Statut fiabilité",
+        ],
+        "rows": table_rows,
         "limits_paragraph": f2_templates.reliability_limits_paragraph(selection.level),
     }
+
+
+def _ci95_display(ci: Any) -> str:
+    if not isinstance(ci, dict):
+        return "IC95 non disponible"
+    label = ci.get("label")
+    if label:
+        return str(label)
+    low, high = ci.get("low"), ci.get("high")
+    if low is not None and high is not None:
+        return f"[{low} ; {high}]"
+    return "IC95 non disponible"
+
+
+def _reliability_status(row: dict[str, Any]) -> str:
+    warnings = row.get("warnings") or []
+    if warnings:
+        return "Avertissement S3"
+    return "Fiable"
 
 
 def _extract_global_test(

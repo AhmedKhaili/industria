@@ -74,6 +74,7 @@ def _run_assembler(
     *,
     enable_compact: bool = True,
     monkeypatch: pytest.MonkeyPatch | None = None,
+    df_propre=None,
 ):
     if enable_compact and monkeypatch is not None:
         original = prep.rapport_pdf_config
@@ -114,6 +115,7 @@ def _run_assembler(
         ctx,
         "technicien",
         timestamp="2026-06-02T10:00:00.000+00:00",
+        df_propre=df_propre,
     )
 
 
@@ -232,6 +234,44 @@ def test_excluded_names_not_in_sensitive_blocks(
             assert name not in text, f"{name} in {btype}"
 
 
+def test_statistical_reliability_rendered_as_table_in_document(
+    ctx: ClientContext, fixture_payload: dict, enable_f2_compact, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    s3 = {"group_descriptive": fixture_payload["group_descriptive"]}
+    out = _run_assembler(ctx, fixture_payload["intent"], s3, monkeypatch=monkeypatch)
+    rel = out["document"].find("statistical_reliability")
+    assert rel is not None
+    assert rel.data.get("columns")
+    assert rel.data.get("rows")
+    assert "IC95 moyenne" in rel.data["columns"]
+
+
+def test_excluded_absent_from_chart_included_groups(
+    ctx: ClientContext, fixture_payload: dict, enable_f2_compact, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import pandas as pd
+
+    s3 = {"group_descriptive": fixture_payload["group_descriptive"]}
+    df = pd.DataFrame(
+        {
+            "FACTEUR_QUALI_TEST": ["GROUPE_A"] * 8
+            + ["GROUPE_B"] * 6
+            + ["GROUPE_C"] * 4
+            + ["OPERATEUR_X"] * 20,
+            "VARIABLE_QUANTI_TEST": [0.1] * 38,
+        }
+    )
+    out = _run_assembler(
+        ctx, fixture_payload["intent"], s3, monkeypatch=monkeypatch, df_propre=df
+    )
+    charts = out["document"].find("charts")
+    assert charts is not None
+    for it in charts.data.get("items") or []:
+        included = it.get("included_groups") or []
+        for name in _EXCLUDED:
+            assert name not in included
+
+
 def test_renderer_smoke_and_page_count(
     ctx: ClientContext, fixture_payload: dict, enable_f2_compact, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -246,7 +286,8 @@ def test_renderer_smoke_and_page_count(
     pdf_path.write_bytes(pdf)
 
     reader = PdfReader(io.BytesIO(pdf))
-    assert len(reader.pages) <= 6
+    page_count = len(reader.pages)
+    assert 4 <= page_count <= 6
     text = "\n".join((p.extract_text() or "") for p in reader.pages)
     assert "Synthèse métier" in text or "Synth" in text
     assert "Groupes non exploités" in text

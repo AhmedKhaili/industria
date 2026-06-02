@@ -4,7 +4,7 @@ A1 — Assembleur S7 : ReportDocument pré-formaté (Python pur).
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from systems.s7 import prep
 from systems.s7.document import ReportBlock, ReportDocument
@@ -26,6 +26,7 @@ def run(
     profile: str,
     *,
     timestamp: str | None = None,
+    df_propre: Any = None,
 ) -> dict:
     try:
         cfg = prep.rapport_pdf_config(context)
@@ -335,6 +336,7 @@ def run(
                 specialist_results=specialist_results,
                 timestamp=ts,
                 profile=profile,
+                df_propre=df_propre,
                 meta_extra={
                     "client_mode": client_mode,
                     "rapport_type": rapport_type,
