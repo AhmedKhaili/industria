@@ -66,6 +66,58 @@ def business_synthesis_lines(
     }
 
 
+def _row_metrics_phrase(row: dict[str, Any] | None) -> str:
+    if not row:
+        return ""
+    parts: list[str] = []
+    mean = row.get("mean")
+    if mean is not None:
+        try:
+            parts.append(f"moyenne {_fmt_num(mean)}")
+        except (TypeError, ValueError):
+            pass
+    pct = row.get("out_of_tolerance_rate")
+    if pct is not None:
+        try:
+            parts.append(f"{float(pct):.1f} % hors tolérance".replace(".", ","))
+        except (TypeError, ValueError):
+            pass
+    cpk = row.get("cpk")
+    if cpk is not None:
+        try:
+            parts.append(f"Cpk {float(cpk):.2f}".replace(".", ","))
+        except (TypeError, ValueError):
+            pass
+    ci = row.get("ci95_out_of_tolerance_rate")
+    if isinstance(ci, dict):
+        label = ci.get("label")
+        if label:
+            parts.append(f"IC95 % HT : {label}")
+        elif ci.get("low") is not None and ci.get("high") is not None:
+            parts.append(
+                f"IC95 % HT : [{ci['low']} % ; {ci['high']} %]"
+            )
+    return ", ".join(parts)
+
+
+def _fmt_num(value: Any, decimals: int = 3) -> str:
+    return f"{float(value):.{decimals}f}".replace(".", ",")
+
+
+def _referent_singular(unit: str, group_value: str) -> str:
+    u = unit.strip().lower()
+    if u == "matrice":
+        return f"La matrice {group_value}"
+    return f"Le {u} {group_value}"
+
+
+def _referent_plural_label(unit: str) -> str:
+    u = unit.strip().lower()
+    if u == "matrice":
+        return "Les matrices"
+    return f"Les {u}s"
+
+
 def conclusion_key_paragraphs(
     *,
     variable_label: str,
@@ -76,6 +128,8 @@ def conclusion_key_paragraphs(
     factor_label: str,
     degenerate: bool,
     has_distinct_favorable: bool,
+    favorable_strength: str = "none",
+    favorable_row: dict[str, Any] | None = None,
 ) -> list[str]:
     if degenerate:
         text = (
@@ -95,13 +149,25 @@ def conclusion_key_paragraphs(
         f"Le groupe {worst_group} présente le profil le plus défavorable "
         f"({metrics}) parmi les groupes fiables retenus."
     )
+    fav_metrics = _row_metrics_phrase(favorable_row)
     if has_distinct_favorable and best_group and best_group != worst_group:
-        p2 = (
-            f"À titre de contraste, le groupe {best_group} affiche un profil "
-            f"plus favorable parmi les groupes fiables."
-        )
+        if favorable_strength == "robust":
+            suffix = f" ({fav_metrics})" if fav_metrics else ""
+            p2 = (
+                f"À titre de contraste, le groupe {best_group} constitue la "
+                f"référence favorable la plus robuste{suffix}."
+            )
+        else:
+            suffix = f" ({fav_metrics})" if fav_metrics else ""
+            p2 = (
+                f"Référence favorable à confirmer : le groupe {best_group}"
+                f"{suffix}."
+            )
     else:
-        p2 = "Aucun groupe de référence fiable distinct identifié."
+        p2 = (
+            "Aucune référence favorable robuste n'est identifiable "
+            "sur les données retenues."
+        )
     p3 = (
         f"L'écart observé selon {factor_label} est associé à {variable_label} ; "
         "il ne permet pas à lui seul d'affirmer une causalité directe certaine."
@@ -171,67 +237,119 @@ def statistical_test_paragraphs(
 def business_reading_sections_compact(
     rows_reliable: list[dict[str, Any]],
     *,
+    worst_row: dict[str, Any] | None,
+    favorable_row: dict[str, Any] | None,
+    favorable_strength: str,
     worse_direction: str,
     analysis_level: str,
+    factor_label: str,
 ) -> list[dict[str, Any]]:
-    """Au plus 3 sections : priorité / intermédiaires synthétisés / favorable."""
-    if not rows_reliable:
+    """Au plus 3 sections : prioritaire / intermédiaires / favorable (ou absence)."""
+    if not rows_reliable or not worst_row:
         return []
 
     ordered = sorted(rows_reliable, key=lambda r: int(r.get("rank") or 999))
     sections: list[dict[str, Any]] = []
-
-    worst = ordered[0]
-    gv_w = str(worst.get("group_value", ""))
+    unit = factor_label.strip() or "Groupe"
+    gv_w = str(worst_row.get("group_value", ""))
+    metrics_w = _row_metrics_phrase(worst_row)
+    p_w = (
+        f"{_referent_singular(unit, gv_w)} concentre le profil le plus défavorable"
+        f" ({metrics_w})." if metrics_w else
+        f2_templates.business_reading_paragraph_critique(
+            group_value=gv_w,
+            pct=worst_row.get("out_of_tolerance_rate"),
+            cpk=worst_row.get("cpk"),
+            worse_direction=worse_direction,
+        )
+    )
     sections.append(
         {
-            "tier": "critique",
-            "heading": f"Priorité principale — {gv_w}",
-            "paragraphs": [
-                f2_templates.business_reading_paragraph_critique(
-                    group_value=gv_w,
-                    pct=worst.get("out_of_tolerance_rate"),
-                    cpk=worst.get("cpk"),
-                    worse_direction=worse_direction,
-                )
-            ],
+            "tier": "prioritaire",
+            "heading": f"{unit.capitalize()} prioritaire — {gv_w}",
+            "paragraphs": [p_w],
         }
     )
+    assert_no_causality_abuse(p_w)
 
-    middle = ordered[1:-1] if len(ordered) > 2 else []
+    fav_gv = str((favorable_row or {}).get("group_value", ""))
+    middle = [
+        r
+        for r in ordered
+        if str(r.get("group_value", "")) not in (gv_w, fav_gv)
+    ]
     if middle:
-        names = ", ".join(str(r.get("group_value", "")) for r in middle)
+        snippets: list[str] = []
+        for row in middle[:3]:
+            gv = str(row.get("group_value", ""))
+            m = _row_metrics_phrase(row)
+            snippets.append(f"{gv} ({m})" if m else gv)
+        joined = "; ".join(snippets)
+        p_mid = (
+            f"{_referent_plural_label(unit)} {joined} présentent un profil intermédiaire "
+            "et méritent un suivi renforcé."
+        )
         sections.append(
             {
                 "tier": "intermediaire",
-                "heading": "Profils intermédiaires",
-                "paragraphs": [
-                    (
-                        f"Les groupes {names} présentent un profil intermédiaire "
-                        "et méritent une surveillance renforcée."
-                    )
-                ],
+                "heading": f"{unit.capitalize()}s intermédiaires à surveiller",
+                "paragraphs": [p_mid],
             }
         )
-        assert_no_causality_abuse(sections[-1]["paragraphs"][0])
+        assert_no_causality_abuse(p_mid)
 
-    if len(ordered) > 1:
-        best = ordered[-1]
-        gv_b = str(best.get("group_value", ""))
+    if favorable_strength == "robust" and favorable_row:
+        gv_b = str(favorable_row.get("group_value", ""))
+        metrics_b = _row_metrics_phrase(favorable_row)
+        p_fav = (
+            f"{_referent_singular(unit, gv_b)} constitue la référence favorable la plus "
+            f"robuste ({metrics_b})."
+            if metrics_b
+            else f2_templates.business_reading_paragraph_favorable(
+                group_value=gv_b,
+                pct=favorable_row.get("out_of_tolerance_rate"),
+                n=favorable_row.get("n"),
+                analysis_level=analysis_level,
+            )
+        )
         sections.append(
             {
                 "tier": "favorable",
                 "heading": f"Référence favorable — {gv_b}",
-                "paragraphs": [
-                    f2_templates.business_reading_paragraph_favorable(
-                        group_value=gv_b,
-                        pct=best.get("out_of_tolerance_rate"),
-                        n=best.get("n"),
-                        analysis_level=analysis_level,
-                    )
-                ],
+                "paragraphs": [p_fav],
             }
         )
+        assert_no_causality_abuse(p_fav)
+    elif favorable_strength == "limited" and favorable_row:
+        gv_b = str(favorable_row.get("group_value", ""))
+        metrics_b = _row_metrics_phrase(favorable_row)
+        p_lim = (
+            f"Référence favorable à confirmer : {_referent_singular(unit, gv_b).lower()}"
+            f" ({metrics_b})."
+            if metrics_b
+            else f"Référence favorable à confirmer : {_referent_singular(unit, gv_b).lower()}."
+        )
+        sections.append(
+            {
+                "tier": "favorable_limite",
+                "heading": f"Référence favorable à confirmer — {gv_b}",
+                "paragraphs": [p_lim],
+            }
+        )
+        assert_no_causality_abuse(p_lim)
+    else:
+        p_none = (
+            "Aucune référence favorable robuste n'est identifiable "
+            "sur les données retenues."
+        )
+        sections.append(
+            {
+                "tier": "favorable_absent",
+                "heading": "Référence favorable",
+                "paragraphs": [p_none],
+            }
+        )
+        assert_no_causality_abuse(p_none)
 
     return sections[:3]
 

@@ -130,8 +130,236 @@ def test_best_reliable_from_fiables_only(fixture_payload: dict) -> None:
     assert reliable_names == ["GROUPE_A", "GROUPE_B", "GROUPE_C"]
     assert out.best_reliable is not None
     assert out.best_reliable["group_value"] == "GROUPE_C"
+    assert out.favorable_strength == "robust"
     assert out.best_group_s3 == "GROUPE_B"
     assert out.best_group_s3_ignored is None
+
+
+def test_favorable_skips_missing_cpk() -> None:
+    rows = [
+        {
+            "group_value": "GROUPE_A",
+            "n": 10,
+            "out_of_tolerance_rate": 10.0,
+            "cpk": 0.5,
+            "rank": 1,
+            "warnings": [],
+        },
+        {
+            "group_value": "GROUPE_SANS_CPK",
+            "n": 20,
+            "out_of_tolerance_rate": 0.0,
+            "cpk": None,
+            "rank": 2,
+            "warnings": [],
+        },
+    ]
+    block = {
+        "variable": "VARIABLE_QUANTI_TEST",
+        "group_by": "FACTEUR_QUALI_TEST",
+        "level": "measure",
+        "rows": rows,
+    }
+    out = build_f2_compact_selection(
+        {"group_descriptive": [block]},
+        {"variables": ["VARIABLE_QUANTI_TEST"], "group_by": "FACTEUR_QUALI_TEST"},
+        cfg={"f2_compact": {"min_n_measure": 5}},
+    )
+    assert out.best_reliable is None
+    assert out.favorable_strength == "none"
+
+
+def test_favorable_prefers_highest_cpk_at_zero_pct_ht() -> None:
+    rows = [
+        {
+            "group_value": "GROUPE_A",
+            "n": 10,
+            "out_of_tolerance_rate": 15.0,
+            "cpk": 0.4,
+            "rank": 1,
+            "warnings": [],
+        },
+        {
+            "group_value": "GROUPE_B",
+            "n": 8,
+            "out_of_tolerance_rate": 0.0,
+            "cpk": 1.1,
+            "rank": 2,
+            "warnings": [],
+        },
+        {
+            "group_value": "GROUPE_C",
+            "n": 12,
+            "out_of_tolerance_rate": 0.0,
+            "cpk": 1.6,
+            "rank": 3,
+            "warnings": [],
+        },
+    ]
+    block = {
+        "variable": "VARIABLE_QUANTI_TEST",
+        "group_by": "FACTEUR_QUALI_TEST",
+        "level": "measure",
+        "rows": rows,
+    }
+    out = build_f2_compact_selection(
+        {"group_descriptive": [block]},
+        {"variables": ["VARIABLE_QUANTI_TEST"], "group_by": "FACTEUR_QUALI_TEST"},
+        cfg={"f2_compact": {"min_n_measure": 5}},
+    )
+    assert out.best_reliable is not None
+    assert out.best_reliable["group_value"] == "GROUPE_C"
+    assert out.favorable_strength == "robust"
+
+
+def test_favorable_limited_without_explicit_ci95_threshold() -> None:
+    """Sans max_ci95_ht_width_pct YAML, IC95 présent → à confirmer, pas robuste."""
+    rows = [
+        {
+            "group_value": "GROUPE_A",
+            "n": 10,
+            "out_of_tolerance_rate": 10.0,
+            "cpk": 0.5,
+            "rank": 1,
+            "warnings": [],
+        },
+        {
+            "group_value": "GROUPE_OK",
+            "n": 12,
+            "out_of_tolerance_rate": 0.0,
+            "cpk": 1.5,
+            "rank": 2,
+            "ci95_out_of_tolerance_rate": {
+                "low": 0.0,
+                "high": 8.0,
+                "label": "[0,0 % ; 8,0 %]",
+            },
+            "warnings": [],
+        },
+    ]
+    block = {
+        "variable": "VARIABLE_QUANTI_TEST",
+        "group_by": "FACTEUR_QUALI_TEST",
+        "level": "measure",
+        "rows": rows,
+    }
+    out = build_f2_compact_selection(
+        {"group_descriptive": [block]},
+        {"variables": ["VARIABLE_QUANTI_TEST"], "group_by": "FACTEUR_QUALI_TEST"},
+        cfg={"f2_compact": {"min_n_measure": 5}},
+    )
+    assert out.best_reliable is not None
+    assert out.best_reliable["group_value"] == "GROUPE_OK"
+    assert out.favorable_strength == "limited"
+
+
+def test_favorable_robust_when_ci95_threshold_configured_and_met() -> None:
+    rows = [
+        {
+            "group_value": "GROUPE_A",
+            "n": 10,
+            "out_of_tolerance_rate": 10.0,
+            "cpk": 0.5,
+            "rank": 1,
+            "warnings": [],
+        },
+        {
+            "group_value": "GROUPE_OK",
+            "n": 12,
+            "out_of_tolerance_rate": 0.0,
+            "cpk": 1.5,
+            "rank": 2,
+            "ci95_out_of_tolerance_rate": {
+                "low": 0.0,
+                "high": 8.0,
+                "label": "[0,0 % ; 8,0 %]",
+            },
+            "warnings": [],
+        },
+    ]
+    block = {
+        "variable": "VARIABLE_QUANTI_TEST",
+        "group_by": "FACTEUR_QUALI_TEST",
+        "level": "measure",
+        "rows": rows,
+    }
+    out = build_f2_compact_selection(
+        {"group_descriptive": [block]},
+        {"variables": ["VARIABLE_QUANTI_TEST"], "group_by": "FACTEUR_QUALI_TEST"},
+        cfg={"f2_compact": {"min_n_measure": 5, "max_ci95_ht_width_pct": 10}},
+    )
+    assert out.best_reliable is not None
+    assert out.best_reliable["group_value"] == "GROUPE_OK"
+    assert out.favorable_strength == "robust"
+
+
+def test_lisi_like_favorable_not_o5220897_without_cpk() -> None:
+    """Cas C4 : O5220897A5-1 (0 % HT, Cpk absent, IC95 large) ≠ référence forte."""
+    rows = [
+        {
+            "group_value": "O5220910A4-1",
+            "n": 675,
+            "mean": 0.25,
+            "out_of_tolerance_rate": 5.0,
+            "cpk": -0.01,
+            "rank": 1,
+            "warnings": [],
+        },
+        {
+            "group_value": "O5220910A2-2",
+            "n": 323,
+            "mean": 0.05,
+            "out_of_tolerance_rate": 0.0,
+            "cpk": 1.2,
+            "rank": 2,
+            "ci95_out_of_tolerance_rate": {
+                "low": 0.0,
+                "high": 5.0,
+                "label": "[0,0 % ; 5,0 %]",
+            },
+            "warnings": [],
+        },
+        {
+            "group_value": "O5220897A5-1",
+            "n": 20,
+            "mean": 0.02,
+            "out_of_tolerance_rate": 0.0,
+            "cpk": None,
+            "rank": 3,
+            "ci95_out_of_tolerance_rate": {
+                "low": 0.0,
+                "high": 45.0,
+                "label": "[0,0 % ; 45,0 %]",
+            },
+            "warnings": [],
+        },
+    ]
+    block = {
+        "variable": "CR50_INTRADOS_VRILLAGE",
+        "group_by": "Ref_Matrice",
+        "level": "measure",
+        "rows": rows,
+    }
+    out = build_f2_compact_selection(
+        {"group_descriptive": [block]},
+        {
+            "variables": ["CR50_INTRADOS_VRILLAGE"],
+            "group_by": "Ref_Matrice",
+            "intention": "comparaison_groupes",
+        },
+        cfg={
+            "f2_compact": {
+                "min_n_measure": 6,
+                "group_value_pattern": r"^O\d{7}",
+                "require_cpk_for_favorable": True,
+                "max_ci95_ht_width_pct": 40,
+            }
+        },
+    )
+    assert out.worst_reliable["group_value"] == "O5220910A4-1"
+    assert out.best_reliable is not None
+    assert out.best_reliable["group_value"] == "O5220910A2-2"
+    assert out.favorable_strength == "robust"
 
 
 def test_min_n_from_yaml_not_hardcoded() -> None:

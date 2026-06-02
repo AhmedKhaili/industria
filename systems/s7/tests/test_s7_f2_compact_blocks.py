@@ -361,6 +361,64 @@ def test_f2_compact_still_disabled_by_default_in_prep(ctx: ClientContext) -> Non
     assert prep.is_f2_compact_enabled(cfg) is False
 
 
+def test_conclusion_no_robust_favorable_message(compact_doc) -> None:
+    """GROUPE_A pire ; GROUPE_C favorable robuste — pas de message d'absence."""
+    conclusion = compact_doc.find("conclusion_key")
+    assert conclusion is not None
+    text = "\n".join(conclusion.data.get("paragraphs") or [])
+    assert "référence favorable la plus robuste" in text.lower() or "à confirmer" in text.lower()
+    assert "aucune référence favorable robuste" not in text.lower()
+
+
+def test_business_reading_uses_favorable_not_last_rank(compact_doc) -> None:
+    reading = compact_doc.find("business_reading")
+    assert reading is not None
+    text = _block_text(reading.data)
+    assert "GROUPE_C" in text
+    assert "Référence favorable" in text
+    assert "HORS_PATTERN" not in text
+
+
+def test_no_robust_favorable_when_only_missing_cpk(ctx: ClientContext) -> None:
+    rows = [
+        {
+            "group_value": "GROUPE_A",
+            "n": 10,
+            "out_of_tolerance_rate": 8.0,
+            "cpk": 0.6,
+            "rank": 1,
+            "warnings": [],
+        },
+        {
+            "group_value": "GROUPE_SANS_CPK",
+            "n": 15,
+            "out_of_tolerance_rate": 0.0,
+            "cpk": None,
+            "rank": 2,
+            "warnings": [],
+        },
+    ]
+    block = {
+        "variable": "VARIABLE_QUANTI_TEST",
+        "group_by": "FACTEUR_QUALI_TEST",
+        "level": "measure",
+        "rows": rows,
+        "interpretation_limits": "Association statistique — pas causalité directe.",
+    }
+    cfg = prep.rapport_pdf_config(ctx)
+    doc = build_f2_compact_document(
+        {"group_descriptive": [block]},
+        {"variables": ["VARIABLE_QUANTI_TEST"], "group_by": "FACTEUR_QUALI_TEST"},
+        context=ctx,
+        cfg=cfg,
+    )
+    conclusion = doc.find("conclusion_key")
+    text = "\n".join(conclusion.data.get("paragraphs") or [])
+    assert "aucune référence favorable robuste" in text.lower()
+    reading = doc.find("business_reading")
+    assert "aucune référence favorable robuste" in _block_text(reading.data).lower()
+
+
 def test_reliable_groups_in_table_not_excluded(compact_doc) -> None:
     table = compact_doc.find("group_comparison_table")
     assert table is not None

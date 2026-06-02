@@ -24,6 +24,8 @@ ExclusionReason = Literal[
     "warning_s3_autre",
 ]
 
+FavorableStrength = Literal["robust", "limited", "none"]
+
 _EFFECTIF_FAIBLE_RE = re.compile(r"effectif_faible_n_\d+_inferieur_(\d+)")
 
 
@@ -54,6 +56,7 @@ class F2CompactSelection:
     best_group_s3: str | None = None
     worst_group_s3_ignored: str | None = None
     best_group_s3_ignored: str | None = None
+    favorable_strength: FavorableStrength = "none"
     selection_meta: dict[str, Any] = field(default_factory=dict)
     skipped_reason: str | None = None
 
@@ -157,7 +160,12 @@ def build_f2_compact_selection(
 
     reliable.sort(key=lambda r: int(r.get("rank") or 999))
     worst_reliable = reliable[0] if reliable else None
-    best_reliable = reliable[-1] if reliable else None
+    best_reliable, favorable_strength = _select_favorable_reference(
+        reliable,
+        worst_reliable,
+        min_n=min_n,
+        compact_cfg=compact_cfg,
+    )
 
     worst_s3 = primary.get("worst_group")
     best_s3 = primary.get("best_group")
@@ -185,6 +193,7 @@ def build_f2_compact_selection(
         rows_excluded=excluded,
         worst_reliable=worst_reliable,
         best_reliable=best_reliable,
+        favorable_strength=favorable_strength,
         worst_group_s3=worst_s3_str,
         best_group_s3=best_s3_str,
         worst_group_s3_ignored=worst_ignored,
@@ -194,6 +203,10 @@ def build_f2_compact_selection(
             "excluded_count": len(excluded),
             "total_rows": len(rows),
             "degenerate": len(reliable) == 0,
+            "favorable_strength": favorable_strength,
+            "favorable_group": (
+                str(best_reliable.get("group_value", "")) if best_reliable else None
+            ),
         },
     )
 
@@ -370,6 +383,128 @@ def _warning_str(warning: Any) -> str:
         code = warning.get("code", "")
         return str(code) if code else str(warning)
     return str(warning)
+
+
+def _select_favorable_reference(
+    reliable: list[dict[str, Any]],
+    worst: dict[str, Any] | None,
+    *,
+    min_n: int | None,
+    compact_cfg: dict[str, Any],
+) -> tuple[dict[str, Any] | None, FavorableStrength]:
+    """
+    Référence favorable parmi les groupes fiables (hors pire groupe retenu).
+
+    Priorité : % HT faible, Cpk élevé, IC95 % HT étroit, effectif suffisant, sans warning.
+    """
+    if not reliable or worst is None:
+        return None, "none"
+
+    require_cpk = bool(compact_cfg.get("require_cpk_for_favorable", True))
+    max_ci95_width: float | None = None
+    if "max_ci95_ht_width_pct" in compact_cfg:
+        max_ci95_width = _float_cfg(compact_cfg.get("max_ci95_ht_width_pct"))
+    worst_gv = str(worst.get("group_value", ""))
+
+    robust_pool: list[dict[str, Any]] = []
+    limited_pool: list[dict[str, Any]] = []
+
+    for row in reliable:
+        gv = str(row.get("group_value", ""))
+        if gv == worst_gv:
+            continue
+        tier = _favorable_tier(
+            row,
+            min_n=min_n,
+            require_cpk=require_cpk,
+            max_ci95_width=max_ci95_width,
+        )
+        if tier == "robust":
+            robust_pool.append(row)
+        elif tier == "limited":
+            limited_pool.append(row)
+
+    if robust_pool:
+        chosen = min(robust_pool, key=_favorable_sort_key)
+        return chosen, "robust"
+    if limited_pool:
+        chosen = min(limited_pool, key=_favorable_sort_key)
+        return chosen, "limited"
+    return None, "none"
+
+
+def _favorable_tier(
+    row: dict[str, Any],
+    *,
+    min_n: int | None,
+    require_cpk: bool,
+    max_ci95_width: float | None,
+) -> FavorableStrength | None:
+    if _has_reliability_warning(row):
+        return None
+    n = _row_n(row)
+    if min_n is not None and n is not None and n < min_n:
+        return None
+
+    cpk_raw = row.get("cpk")
+    cpk: float | None
+    try:
+        cpk = float(cpk_raw) if cpk_raw is not None else None
+    except (TypeError, ValueError):
+        cpk = None
+
+    if require_cpk and cpk is None:
+        return None
+
+    ci95_width = _ci95_ht_width_pct(row)
+    if cpk is not None:
+        if ci95_width is not None:
+            if max_ci95_width is None:
+                return "limited"
+            if ci95_width > max_ci95_width:
+                return "limited"
+        return "robust"
+    return None
+
+
+def _favorable_sort_key(row: dict[str, Any]) -> tuple:
+    pct = row.get("out_of_tolerance_rate")
+    pct_key = float(pct) if pct is not None else 999.0
+    cpk_raw = row.get("cpk")
+    try:
+        cpk_key = -float(cpk_raw) if cpk_raw is not None else 999.0
+    except (TypeError, ValueError):
+        cpk_key = 999.0
+    ci95_w = _ci95_ht_width_pct(row)
+    ci95_key = ci95_w if ci95_w is not None else 999.0
+    n = _row_n(row)
+    n_key = -n if n is not None else 0
+    return (pct_key, cpk_key, ci95_key, n_key)
+
+
+def _has_reliability_warning(row: dict[str, Any]) -> bool:
+    return bool(row.get("warnings"))
+
+
+def _ci95_ht_width_pct(row: dict[str, Any]) -> float | None:
+    ci = row.get("ci95_out_of_tolerance_rate")
+    if not isinstance(ci, dict):
+        return None
+    try:
+        low = float(ci["low"])
+        high = float(ci["high"])
+    except (TypeError, ValueError, KeyError):
+        return None
+    return high - low
+
+
+def _float_cfg(value: Any, *, default: float | None = None) -> float | None:
+    if value is None:
+        return default
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
 
 
 def _row_n(row: dict[str, Any]) -> int | None:

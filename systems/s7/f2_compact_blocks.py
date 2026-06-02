@@ -223,8 +223,12 @@ def _build_block_map(
     worst_group = str((worst or {}).get("group_value", ""))
     best_group = str((best or {}).get("group_value", "")) if best else None
     degenerate = selection.degenerate or bool(selection.skipped_reason)
+    favorable_strength = str(selection.favorable_strength or "none")
     has_distinct_favorable = bool(
-        best_group and worst_group and best_group != worst_group
+        favorable_strength in ("robust", "limited")
+        and best_group
+        and worst_group
+        and best_group != worst_group
     )
 
     worst_pct = _float_or_none((worst or {}).get("out_of_tolerance_rate"))
@@ -258,6 +262,8 @@ def _build_block_map(
             factor_label=factor_label,
             degenerate=degenerate,
             has_distinct_favorable=has_distinct_favorable,
+            favorable_strength=favorable_strength,
+            favorable_row=best if has_distinct_favorable else None,
         ),
         "reliable_count": len(rows),
         "excluded_count": len(selection.rows_excluded),
@@ -348,8 +354,12 @@ def _build_block_map(
         "title": "Lecture métier",
         "sections": business_reading_sections_compact(
             rows,
+            worst_row=worst,
+            favorable_row=best if has_distinct_favorable else None,
+            favorable_strength=favorable_strength,
             worse_direction=worse_direction,
             analysis_level=selection.level,
+            factor_label=factor_label,
         ),
     }
 
