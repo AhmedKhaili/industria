@@ -42,6 +42,54 @@ _CONTRA_EN9100 = [
 ]
 
 
+def _apply_f2_compact_gate(
+    document: "ReportDocument | None",
+    cfg: dict,
+    blocking: list[str],
+    warnings: list[str],
+) -> None:
+    if not document:
+        return
+    render_mode = str((document.meta or {}).get("render_mode", "")).lower()
+    if render_mode != "f2_compact":
+        return
+    required = (
+        "business_synthesis",
+        "conclusion_key",
+        "verdict",
+        "group_comparison_table",
+        "excluded_groups",
+        "interpretation_limits",
+    )
+    types = set(document.block_types())
+    missing = [b for b in required if b not in types]
+    if missing:
+        msg = f"blocs F2 compact manquants : {', '.join(missing)}"
+        if prep.is_client_mode(cfg):
+            blocking.append(msg)
+        else:
+            warnings.append(msg)
+    ck = document.find("conclusion_key")
+    if not ck or not ck.data.get("paragraphs"):
+        msg = "conclusion_key absente ou vide en mode f2_compact"
+        if prep.is_client_mode(cfg):
+            blocking.append(msg)
+        else:
+            warnings.append(msg)
+    limits = document.find("interpretation_limits")
+    if not limits or not limits.data.get("paragraphs"):
+        msg = "interpretation_limits absente en mode f2_compact"
+        if prep.is_client_mode(cfg):
+            blocking.append(msg)
+        else:
+            warnings.append(msg)
+    if prep.text_contains_forbidden_causality(document.all_text()):
+        blocking.append(
+            "Vocabulaire causal interdit dans le rapport F2 compact "
+            "(cause / prouve / démontre une causalité)"
+        )
+
+
 def _apply_f2_narratif_gate(
     document: "ReportDocument | None",
     cfg: dict,
@@ -89,6 +137,7 @@ def run(
     warnings: list[str] = []
     if not prep.is_client_mode(cfg):
         _apply_f2_narratif_gate(document, cfg, blocking, warnings)
+        _apply_f2_compact_gate(document, cfg, blocking, warnings)
         return {
             "blocking": blocking,
             "warnings": warnings,
@@ -194,6 +243,7 @@ def run(
             warnings.append(f"Contrôle nombre de pages ignoré : {exc}")
 
     _apply_f2_narratif_gate(document, cfg, blocking, warnings)
+    _apply_f2_compact_gate(document, cfg, blocking, warnings)
 
     publishable = len(blocking) == 0
     return {"blocking": blocking, "warnings": warnings, "publishable": publishable}

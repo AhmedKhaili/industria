@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 
 from systems.s7 import prep
 from systems.s7.document import ReportBlock, ReportDocument
+from systems.s7.f2_compact_blocks import build_f2_compact_document, resolve_f2_compact_plan
 from systems.s7.f2_report_blocks import assemble_narratif_document_blocks, resolve_f2_narratif_plan
 
 if TYPE_CHECKING:
@@ -311,12 +312,44 @@ def run(
             "client_mode": client_mode,
         }
 
+        compact_requested = prep.is_f2_compact_enabled(cfg)
+        compact_plan = (
+            resolve_f2_compact_plan(s3_output, intent, context, cfg)
+            if compact_requested
+            else {"use_compact": False, "skipped_reason": None}
+        )
+
         render_mode_requested = prep.resolve_render_mode(intent, cfg)
         f2_plan = resolve_f2_narratif_plan(
             render_mode_requested, intent, s3_output, context, cfg
         )
 
-        if f2_plan["use_f2"]:
+        if compact_plan["use_compact"]:
+            document = build_f2_compact_document(
+                s3_output,
+                intent,
+                context=context,
+                cfg=cfg,
+                question_originale=question_originale,
+                chart_items=chart_items,
+                specialist_results=specialist_results,
+                timestamp=ts,
+                profile=profile,
+                meta_extra={
+                    "client_mode": client_mode,
+                    "rapport_type": rapport_type,
+                    "bandeau_couleur": meta["bandeau_couleur"],
+                    "operateur": operateur,
+                    "nb_graphiques": len(chart_items),
+                    "nb_recommandations": 0,
+                    "fidelite_score": meta["fidelite_score"],
+                    "warning_count": warning_count if not client_mode else 0,
+                    "specialists_executed": meta["specialists_executed"],
+                },
+            )
+            meta = document.meta
+            blocks = document.blocks
+        elif f2_plan["use_f2"]:
             bundle = f2_plan["bundle"]
             meta["render_mode"] = "narratif_metier"
             meta["f2_variable"] = bundle.variable
@@ -342,6 +375,8 @@ def run(
             )
         elif rapport_type == "complet":
             meta["render_mode"] = "audit_en9100"
+            if compact_requested and compact_plan.get("skipped_reason"):
+                meta["f2_compact_skipped"] = compact_plan["skipped_reason"]
             if f2_plan.get("skipped_reason"):
                 meta["f2_narratif_skipped"] = f2_plan["skipped_reason"]
             portrait_vars = prep.build_portrait_variables(specialist_results)
@@ -377,6 +412,8 @@ def run(
                 blocks.append(ReportBlock("annexe_dunn", {"items": dunn_annexe}))
         else:
             meta["render_mode"] = "audit_en9100"
+            if compact_requested and compact_plan.get("skipped_reason"):
+                meta["f2_compact_skipped"] = compact_plan["skipped_reason"]
             if f2_plan.get("skipped_reason"):
                 meta["f2_narratif_skipped"] = f2_plan["skipped_reason"]
             blocks = [

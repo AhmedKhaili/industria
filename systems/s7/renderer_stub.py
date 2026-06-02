@@ -201,14 +201,17 @@ def _col_key(label: str) -> str:
 
 _F2_BLOCK_TYPES = frozenset(
     {
+        "business_synthesis",
         "conclusion_key",
         "business_context",
         "key_indicators",
         "how_to_read_cpk",
         "group_comparison_table",
         "statistical_reliability",
+        "statistical_test",
         "business_reading",
         "final_verdict",
+        "excluded_groups",
         "interpretation_limits",
     }
 )
@@ -234,6 +237,7 @@ def render_pdf(
     story: list[Any] = []
     meta = document.meta
     client_mode = bool(meta.get("client_mode"))
+    is_f2_compact = str(meta.get("render_mode", "")) == "f2_compact"
 
     def clean(text: str) -> str:
         return _sanitize(text, formatters_mod, client_mode=client_mode)
@@ -555,7 +559,8 @@ def render_pdf(
                     story.append(Spacer(1, 2 * mm))
                     story.append(Paragraph(clean(str(interp)), styles["body"]))
                 story.append(Spacer(1, 4 * mm))
-            story.append(PageBreak())
+            if not is_f2_compact:
+                story.append(PageBreak())
 
         elif btype == "metrics_table":
             metrics_title = str(
@@ -665,8 +670,18 @@ def render_pdf(
             story.append(PageBreak())
 
         elif btype in _F2_BLOCK_TYPES:
-            title = clean(str(data.get("title", btype.replace("_", " ").upper())))
-            story.append(Paragraph(title, styles["h1"]))
+            if btype == "business_synthesis":
+                lines = list(data.get("lines") or [])
+                if lines:
+                    story.append(Paragraph(clean(str(lines[0])), styles["h1"]))
+                    for line in lines[1:]:
+                        txt = clean(str(line))
+                        if txt and txt != "N/A":
+                            story.append(Paragraph(txt, styles["body"]))
+                            story.append(Spacer(1, 2 * mm))
+            else:
+                title = clean(str(data.get("title", btype.replace("_", " ").upper())))
+                story.append(Paragraph(title, styles["h1"]))
             if btype == "conclusion_key":
                 for fact in data.get("facts") or []:
                     if not isinstance(fact, dict):
@@ -754,6 +769,60 @@ def render_pdf(
                 lim = data.get("limits_paragraph")
                 if lim:
                     story.append(Paragraph(clean(str(lim)), styles["body"]))
+            elif btype == "statistical_test":
+                _append_paragraphs(story, data.get("paragraphs"), styles, clean)
+            elif btype == "excluded_groups":
+                summary = data.get("summary")
+                if summary:
+                    story.append(Paragraph(clean(str(summary)), styles["caption"]))
+                ex_rows = [
+                    [
+                        clean(str(r.get("group_value", ""))),
+                        clean(str(r.get("n", "—"))),
+                        clean(str(r.get("reason_label", ""))),
+                        clean(str(r.get("detail", ""))),
+                    ]
+                    for r in data.get("rows") or []
+                    if isinstance(r, dict)
+                ]
+                if ex_rows:
+                    cap_style = ParagraphStyle(
+                        "excluded_cell",
+                        parent=styles["caption"],
+                        fontSize=7,
+                        leading=9,
+                    )
+                    table_rows: list[list[Any]] = [
+                        [
+                            Paragraph(f"<b>{clean(c)}</b>", cap_style)
+                            for c in ("Groupe", "n", "Motif", "Détail")
+                        ]
+                    ]
+                    for row in ex_rows:
+                        table_rows.append(
+                            [Paragraph(c, cap_style) for c in row]
+                        )
+                    tbl = Table(
+                        table_rows,
+                        colWidths=[
+                            _CONTENT_WIDTH * 0.22,
+                            _CONTENT_WIDTH * 0.08,
+                            _CONTENT_WIDTH * 0.25,
+                            _CONTENT_WIDTH * 0.45,
+                        ],
+                        repeatRows=1,
+                    )
+                    tbl.setStyle(
+                        TableStyle(
+                            [
+                                ("BACKGROUND", (0, 0), (-1, 0), colors.lightgrey),
+                                ("FONTSIZE", (0, 0), (-1, -1), 7),
+                                ("GRID", (0, 0), (-1, -1), 0.5, colors.lightgrey),
+                                ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                            ]
+                        )
+                    )
+                    story.extend([tbl, Spacer(1, 3 * mm)])
             elif btype == "business_reading":
                 for sec in data.get("sections") or []:
                     if not isinstance(sec, dict):
@@ -777,7 +846,8 @@ def render_pdf(
                 _append_paragraphs(story, data.get("paragraphs"), styles, clean)
             elif btype == "interpretation_limits":
                 _append_paragraphs(story, data.get("paragraphs"), styles, clean)
-            story.append(PageBreak())
+            if not is_f2_compact:
+                story.append(PageBreak())
 
         elif btype == "annexe_dunn":
             story.append(Paragraph("ANNEXE — Comparaisons post-hoc (Dunn)", styles["h1"]))

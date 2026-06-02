@@ -71,8 +71,7 @@ def build_f2_compact_document(
     meta_extra: dict[str, Any] | None = None,
 ) -> ReportDocument:
     """
-    Assemble un ReportDocument F2 compact inspectable (C2).
-    Non branché dans a1_assembler — C3 uniquement.
+    Assemble un ReportDocument F2 compact inspectable (C2/C3).
     """
     cfg = cfg or {}
     if context is not None and not cfg:
@@ -143,6 +142,39 @@ def build_f2_compact_document(
         if key in block_map
     ]
     return ReportDocument(meta=meta, blocks=blocks)
+
+
+def resolve_f2_compact_plan(
+    s3_output: dict,
+    intent: dict,
+    context: Any = None,
+    cfg: dict | None = None,
+) -> dict[str, Any]:
+    """
+    Décide si le rapport utilise F2 compact (flag explicite uniquement).
+
+    intent.rapport_mode, f2_narratif_enabled et group_descriptive seuls ne suffisent pas.
+    """
+    cfg = cfg or {}
+    if not prep.is_f2_compact_enabled(cfg):
+        return {"use_compact": False, "skipped_reason": None}
+
+    from systems.s7.f2_report_blocks import is_f2_intention_eligible
+
+    if not is_f2_intention_eligible(intent):
+        return {"use_compact": False, "skipped_reason": "intention_not_eligible"}
+
+    if not extract_group_descriptive_list(s3_output):
+        return {"use_compact": False, "skipped_reason": "no_group_descriptive"}
+
+    selection = build_f2_compact_selection(s3_output, intent, context, cfg)
+    if selection.skipped_reason:
+        return {
+            "use_compact": False,
+            "skipped_reason": selection.skipped_reason,
+        }
+
+    return {"use_compact": True, "skipped_reason": None, "selection": selection}
 
 
 def f2_compact_document_to_dict(doc: ReportDocument) -> dict[str, Any]:
@@ -375,6 +407,7 @@ def _build_block_map(
     }
 
     traceability = {
+        "sha256": "",
         "timestamp": meta.get("timestamp"),
         "reference": meta.get("reference"),
         "render_mode": "f2_compact",
@@ -384,6 +417,8 @@ def _build_block_map(
         "excluded_count": len(selection.rows_excluded),
         "thresholds_used": selection.thresholds_used,
         "industria_version": meta.get("industria_version"),
+        "client_mode": bool(meta.get("client_mode")),
+        "fidelite_score": meta.get("fidelite_score", 0.0),
     }
 
     return {
