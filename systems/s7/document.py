@@ -64,6 +64,22 @@ class ReportDocument:
                             parts.extend(str(c) for c in row)
             for line in data.get("dunn_summary") or []:
                 parts.append(str(line))
+            for fact in data.get("facts") or []:
+                if isinstance(fact, dict):
+                    parts.append(str(fact.get("value", "")))
+            for sec in data.get("sections") or []:
+                if isinstance(sec, dict):
+                    parts.extend(str(p) for p in sec.get("paragraphs") or [])
+            for grp in data.get("groups") or []:
+                if isinstance(grp, dict):
+                    ci = grp.get("ci95_mean")
+                    if isinstance(ci, dict):
+                        parts.append(str(ci.get("label", "")))
+            for row in data.get("rows") or []:
+                if isinstance(row, dict):
+                    for k in ("value", "mean_display", "out_of_tolerance_rate_display"):
+                        if row.get(k) is not None:
+                            parts.append(str(row[k]))
             for item in data.get("items") or data.get("recommendations") or []:
                 if isinstance(item, dict):
                     for k in ("action", "text", "specialist", "justification"):

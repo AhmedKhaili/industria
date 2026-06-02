@@ -7,28 +7,77 @@ from __future__ import annotations
 import re
 from typing import Any
 
-_FORBIDDEN_CAUSALITY = [
-    re.compile(r"\bcause\b", re.I),
-    re.compile(r"\bcausent\b", re.I),
-    re.compile(r"\bcausalit", re.I),
-    re.compile(r"\bprouve\b", re.I),
-    re.compile(r"\bdémontre une causalité", re.I),
-    re.compile(r"\bdemontre une causalite", re.I),
-    re.compile(r"\bà l'origine de\b", re.I),
-    re.compile(r"\bresponsable de\b", re.I),
+_PRUDENT_CAUSALITY_PATTERNS = [
+    re.compile(r"ne\s+permet\s+pas\s+d'affirmer\s+une\s+causalit", re.I),
+    re.compile(r"ne\s+démontre\s+pas\s+une\s+causalit", re.I),
+    re.compile(r"ne\s+demontre\s+pas\s+une\s+causalit", re.I),
+    re.compile(r"ne\s+prouve\s+pas", re.I),
+    re.compile(r"ne\s+.{0,50}?pas\s+.{0,30}?causalit", re.I),
+    re.compile(r"association.*pas\s+causalit", re.I),
+    re.compile(r"pas\s+causalit[ée]\s+certaine", re.I),
+    re.compile(r"ne\s+prouve\s+pas\s+une\s+relation\s+de\s+cause", re.I),
 ]
+
+_ABUSIVE_CAUSALITY_PATTERNS = [
+    re.compile(r"\b\w+\s+cause\s+(?:le|la|les|l'|un|une|du|des|d')\b", re.I),
+    re.compile(r"\bcausent\b", re.I),
+    re.compile(r"\bprouve\s+que\b", re.I),
+    re.compile(r"\bdémontre\s+que\b", re.I),
+    re.compile(
+        r"\b(?:prouve|démontre|demontre)\s+une\s+causalit[ée]\s+directe\s+certaine\b",
+        re.I,
+    ),
+    re.compile(r"\bresponsable\s+de\b", re.I),
+    re.compile(r"\bà\s+l'origine\s+de\b", re.I),
+    re.compile(r"\bimpact\s+direct\s+certain\b", re.I),
+    re.compile(
+        r"\brelation\s+de\s+cause\s+à\s+effet\s+démontrée\b",
+        re.I,
+    ),
+    re.compile(
+        r"\brelation\s+de\s+cause\s+a\s+effet\s+demontrée\b",
+        re.I,
+    ),
+]
+
+_SENTENCE_SPLIT = re.compile(r"(?<=[.!?…])\s+")
+
+
+def _sentence_is_prudent_on_causality(sentence: str) -> bool:
+    return any(p.search(sentence) for p in _PRUDENT_CAUSALITY_PATTERNS)
+
+
+def _sentence_has_abusive_causality(sentence: str) -> bool:
+    s = sentence.strip()
+    if not s:
+        return False
+    if _sentence_is_prudent_on_causality(s):
+        return False
+    return any(p.search(s) for p in _ABUSIVE_CAUSALITY_PATTERNS)
+
+
+def text_contains_abusive_causality(text: str) -> bool:
+    """True si une formulation causale positive abusive est détectée."""
+    for sentence in _SENTENCE_SPLIT.split(text):
+        if _sentence_has_abusive_causality(sentence):
+            return True
+    if "\n" in text:
+        for line in text.splitlines():
+            if _sentence_has_abusive_causality(line):
+                return True
+    return False
+
+
+def assert_no_causality_abuse(text: str) -> None:
+    if text_contains_abusive_causality(text):
+        raise ValueError("Formulation interdite (causalité abusive positive)")
+
 
 _SEVERITY_DISPLAY = {
     "critique": "Critique",
     "surveillance": "Surveillance",
     "favorable": "Favorable",
 }
-
-
-def assert_no_causality_abuse(text: str) -> None:
-    for pat in _FORBIDDEN_CAUSALITY:
-        if pat.search(text):
-            raise ValueError(f"Formulation interdite (causalité abusive) : {pat.pattern}")
 
 
 def severity_display(label: str | None) -> str:

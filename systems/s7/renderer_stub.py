@@ -122,6 +122,98 @@ def _show_chart_interpretation(text: str) -> bool:
     return t not in ("", "N/A", "NA", "NONE", "—", "-")
 
 
+def _append_paragraphs(
+    story: list[Any],
+    paragraphs: list[Any] | None,
+    styles: dict[str, ParagraphStyle],
+    clean,
+) -> None:
+    for para in paragraphs or []:
+        txt = clean(str(para))
+        if txt and txt != "N/A":
+            story.append(Paragraph(txt, styles["body"]))
+            story.append(Spacer(1, 2 * mm))
+
+
+def _render_table_from_columns(
+    story: list[Any],
+    columns: list[str],
+    rows: list[Any],
+    styles: dict[str, ParagraphStyle],
+    clean,
+    *,
+    title: str | None = None,
+) -> None:
+    if title:
+        story.append(Paragraph(clean(title), styles["h1"]))
+    if not columns or not rows:
+        story.append(Paragraph("Aucune donnée.", styles["body"]))
+        return
+    body_style = styles["body"]
+    table_rows: list[list[Any]] = [
+        [Paragraph(f"<b>{clean(str(c))}</b>", body_style) for c in columns]
+    ]
+    for row in rows:
+        if isinstance(row, dict):
+            cells = [
+                Paragraph(clean(str(row.get(c, row.get(_col_key(c), "—")))), body_style)
+                for c in columns
+            ]
+        else:
+            cells = [Paragraph(clean(str(c)), body_style) for c in row]
+        while len(cells) < len(columns):
+            cells.append(Paragraph("", body_style))
+        table_rows.append(cells[: len(columns)])
+    ncols = max(len(columns), 1)
+    tbl = Table(
+        table_rows,
+        colWidths=[_CONTENT_WIDTH / ncols] * ncols,
+        repeatRows=1,
+    )
+    tbl.setStyle(
+        TableStyle(
+            [
+                ("BACKGROUND", (0, 0), (-1, 0), _HEADER),
+                ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+                ("FONTSIZE", (0, 0), (-1, -1), 8),
+                ("GRID", (0, 0), (-1, -1), 0.5, colors.lightgrey),
+                ("VALIGN", (0, 0), (-1, -1), "TOP"),
+            ]
+        )
+    )
+    story.extend([tbl, Spacer(1, 4 * mm)])
+
+
+def _col_key(label: str) -> str:
+    mapping = {
+        "Groupe": "group_value",
+        "n": "n",
+        "Moyenne": "mean_display",
+        "Écart-type": "std_display",
+        "% hors tol.": "out_of_tolerance_rate_display",
+        "Cp": "cp_display",
+        "Cpk": "cpk_display",
+        "Rang": "rank",
+        "Niveau": "severity_display",
+    }
+    return mapping.get(label, label)
+
+
+_F2_BLOCK_TYPES = frozenset(
+    {
+        "conclusion_key",
+        "business_context",
+        "key_indicators",
+        "how_to_read_cpk",
+        "group_comparison_table",
+        "statistical_reliability",
+        "business_reading",
+        "final_verdict",
+        "interpretation_limits",
+    }
+)
+
+
 def render_pdf(
     document: ReportDocument,
     *,
@@ -570,6 +662,121 @@ def render_pdf(
                     story.append(Paragraph(f"<b>{spec}</b>", styles["body"]))
                 story.append(Paragraph(text, styles["body"]))
                 story.append(Spacer(1, 3 * mm))
+            story.append(PageBreak())
+
+        elif btype in _F2_BLOCK_TYPES:
+            title = clean(str(data.get("title", btype.replace("_", " ").upper())))
+            story.append(Paragraph(title, styles["h1"]))
+            if btype == "conclusion_key":
+                for fact in data.get("facts") or []:
+                    if not isinstance(fact, dict):
+                        continue
+                    lbl = fact.get("key", "")
+                    val = fact.get("value")
+                    unit = fact.get("unit") or ""
+                    grp = fact.get("group", "")
+                    disp = f"{val}{unit}" if unit == "%" else str(val)
+                    story.append(
+                        Paragraph(
+                            f"• {clean(str(lbl))} ({clean(str(grp))}) : {clean(disp)}",
+                            styles["body"],
+                        )
+                    )
+                _append_paragraphs(story, data.get("paragraphs"), styles, clean)
+            elif btype == "business_context":
+                tol = data.get("tolerances") or {}
+                if tol.get("interval_display"):
+                    story.append(
+                        Paragraph(
+                            f"<b>Tolérances :</b> {clean(str(tol['interval_display']))}",
+                            styles["body"],
+                        )
+                    )
+                hdef = data.get("hors_tolerance_definition")
+                if hdef:
+                    story.append(Paragraph(clean(str(hdef)), styles["body"]))
+                _append_paragraphs(story, data.get("paragraphs"), styles, clean)
+            elif btype == "key_indicators":
+                rows = [
+                    [clean(str(r.get("label", ""))), clean(str(r.get("value", "")))]
+                    for r in data.get("rows") or []
+                    if isinstance(r, dict)
+                ]
+                _render_table_from_columns(
+                    story,
+                    ["Indicateur", "Valeur"],
+                    rows,
+                    styles,
+                    clean,
+                )
+            elif btype == "how_to_read_cpk":
+                _append_paragraphs(story, data.get("paragraphs"), styles, clean)
+                note = data.get("case_note")
+                if note:
+                    story.append(Paragraph(clean(str(note)), styles["body"]))
+            elif btype == "group_comparison_table":
+                cols = list(data.get("columns") or [])
+                _render_table_from_columns(
+                    story,
+                    cols,
+                    list(data.get("rows") or []),
+                    styles,
+                    clean,
+                )
+                foot = data.get("footnote")
+                if foot:
+                    story.append(Paragraph(clean(str(foot)), styles["caption"]))
+            elif btype == "statistical_reliability":
+                note = data.get("measure_annex_note")
+                if note:
+                    story.append(Paragraph(clean(str(note)), styles["body"]))
+                for grp in data.get("groups") or []:
+                    if not isinstance(grp, dict):
+                        continue
+                    gv = clean(str(grp.get("group_value", "")))
+                    story.append(Paragraph(f"<b>{gv}</b>", styles["body"]))
+                    ci_m = grp.get("ci95_mean")
+                    if isinstance(ci_m, dict) and ci_m.get("label"):
+                        story.append(
+                            Paragraph(
+                                f"IC95 moyenne : {clean(str(ci_m['label']))}",
+                                styles["body"],
+                            )
+                        )
+                    ci_p = grp.get("ci95_out_of_tolerance_rate")
+                    if isinstance(ci_p, dict) and ci_p.get("label"):
+                        story.append(
+                            Paragraph(
+                                f"IC95 % hors tol. : {clean(str(ci_p['label']))}",
+                                styles["body"],
+                            )
+                        )
+                lim = data.get("limits_paragraph")
+                if lim:
+                    story.append(Paragraph(clean(str(lim)), styles["body"]))
+            elif btype == "business_reading":
+                for sec in data.get("sections") or []:
+                    if not isinstance(sec, dict):
+                        continue
+                    heading = sec.get("heading")
+                    if heading:
+                        story.append(Paragraph(clean(str(heading)), styles["h1"]))
+                    _append_paragraphs(story, sec.get("paragraphs"), styles, clean)
+            elif btype == "final_verdict":
+                for item in data.get("group_hierarchy") or []:
+                    if not isinstance(item, dict):
+                        continue
+                    story.append(
+                        Paragraph(
+                            f"• {clean(str(item.get('rank')))}. "
+                            f"{clean(str(item.get('group_value')))} "
+                            f"({clean(str(item.get('severity_display', '')))})",
+                            styles["body"],
+                        )
+                    )
+                _append_paragraphs(story, data.get("paragraphs"), styles, clean)
+            elif btype == "interpretation_limits":
+                _append_paragraphs(story, data.get("paragraphs"), styles, clean)
             story.append(PageBreak())
 
         elif btype == "annexe_dunn":

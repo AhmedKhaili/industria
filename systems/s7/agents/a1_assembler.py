@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 
 from systems.s7 import prep
 from systems.s7.document import ReportBlock, ReportDocument
+from systems.s7.f2_report_blocks import assemble_narratif_document_blocks, resolve_f2_narratif_plan
 
 if TYPE_CHECKING:
     from systems.s1.client_context import ClientContext
@@ -301,7 +302,48 @@ def run(
             },
         )
 
-        if rapport_type == "complet":
+        verdict_data = {
+            "label": verdict_lbl,
+            "priorite_max": prio,
+            "verdict_key": verdict_key,
+            "banner": banner,
+            "bullets": bullets,
+            "client_mode": client_mode,
+        }
+
+        render_mode_requested = prep.resolve_render_mode(intent, cfg)
+        f2_plan = resolve_f2_narratif_plan(
+            render_mode_requested, intent, s3_output, context
+        )
+
+        if f2_plan["use_f2"]:
+            bundle = f2_plan["bundle"]
+            meta["render_mode"] = "narratif_metier"
+            meta["f2_variable"] = bundle.variable
+            meta["f2_source_level"] = bundle.source_level
+            if not dunn_annexe:
+                for it in raw_interps:
+                    spec = str(it.get("specialist", "")).lower()
+                    if spec == "dunn_posthoc" and it.get("text"):
+                        dunn_annexe.append(
+                            {
+                                "label": prep.specialist_client_label(spec),
+                                "text": it.get("text", ""),
+                            }
+                        )
+            blocks = assemble_narratif_document_blocks(
+                bundle,
+                meta=meta,
+                verdict_data=verdict_data,
+                chart_items=chart_items,
+                reco_rows=reco_rows,
+                trace_block=trace_block,
+                dunn_annexe=dunn_annexe or None,
+            )
+        elif rapport_type == "complet":
+            meta["render_mode"] = "audit_en9100"
+            if f2_plan.get("skipped_reason"):
+                meta["f2_narratif_skipped"] = f2_plan["skipped_reason"]
             portrait_vars = prep.build_portrait_variables(specialist_results)
             cpk_tables = prep.filter_cpk_tables(metric_tables)
             facteurs = prep.build_facteurs_block(
@@ -309,17 +351,7 @@ def run(
             )
             blocks = [
                 ReportBlock("cover", {"meta": meta}),
-                ReportBlock(
-                    "verdict",
-                    {
-                        "label": verdict_lbl,
-                        "priorite_max": prio,
-                        "verdict_key": verdict_key,
-                        "banner": banner,
-                        "bullets": bullets,
-                        "client_mode": client_mode,
-                    },
-                ),
+                ReportBlock("verdict", verdict_data),
                 ReportBlock("portrait_statistique", {"variables": portrait_vars}),
             ]
             if cpk_tables:
@@ -344,19 +376,12 @@ def run(
             if dunn_annexe:
                 blocks.append(ReportBlock("annexe_dunn", {"items": dunn_annexe}))
         else:
+            meta["render_mode"] = "audit_en9100"
+            if f2_plan.get("skipped_reason"):
+                meta["f2_narratif_skipped"] = f2_plan["skipped_reason"]
             blocks = [
                 ReportBlock("cover", {"meta": meta}),
-                ReportBlock(
-                    "verdict",
-                    {
-                        "label": verdict_lbl,
-                        "priorite_max": prio,
-                        "verdict_key": verdict_key,
-                        "banner": banner,
-                        "bullets": bullets,
-                        "client_mode": client_mode,
-                    },
-                ),
+                ReportBlock("verdict", verdict_data),
                 ReportBlock(
                     "executive",
                     {

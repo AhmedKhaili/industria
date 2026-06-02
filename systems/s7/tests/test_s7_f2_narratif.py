@@ -221,3 +221,15 @@ def test_analyse_complete_requires_group_by() -> None:
 def test_templates_forbid_causality_words() -> None:
     with pytest.raises(ValueError):
         f2_templates.assert_no_causality_abuse("La matrice cause le défaut.")
+
+
+def test_abusive_causality_prudent_limits_text_passes() -> None:
+    ok = (
+        "Cette analyse ne permet pas d'affirmer une causalité directe certaine "
+        "entre le facteur et la mesure."
+    )
+    assert not f2_templates.text_contains_abusive_causality(ok)
+
+
+def test_abusive_causality_positive_phrase_blocked() -> None:
+    assert f2_templates.text_contains_abusive_causality("La matrice cause le défaut.")

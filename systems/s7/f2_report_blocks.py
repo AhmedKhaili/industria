@@ -15,6 +15,20 @@ _F2_INTENTIONS = frozenset(
     {"comparaison_groupes", "diagnostic_causal", "analyse_complete"}
 )
 
+F2_NARRATIF_BLOCKS_BEFORE_CHARTS: tuple[str, ...] = (
+    "conclusion_key",
+    "business_context",
+    "key_indicators",
+    "how_to_read_cpk",
+    "group_comparison_table",
+    "statistical_reliability",
+)
+F2_NARRATIF_BLOCKS_AFTER_CHARTS: tuple[str, ...] = (
+    "business_reading",
+    "final_verdict",
+    "interpretation_limits",
+)
+
 _ANALYSIS_LEVEL_LABELS = {
     "measure": "mesure brute (une ligne par mesure capteur)",
     "aggregated_unit": "unité métier agrégée",
@@ -653,6 +667,71 @@ def _build_business_reading(
             )
     prov.setdefault("business_reading", []).append("rows[].severity_label")
     return {"title": "Lecture métier", "sections": sections}
+
+
+def resolve_f2_narratif_plan(
+    render_mode_requested: str,
+    intent: dict,
+    s3_output: dict,
+    context: Any,
+) -> dict[str, Any]:
+    """
+    Décide si le rapport utilise le narratif F2 ou retombe en audit.
+
+    f2_narratif_skipped n'est renseigné que si narratif_metier était demandé.
+    """
+    if render_mode_requested != "narratif_metier":
+        return {"use_f2": False, "skipped_reason": None, "bundle": None}
+
+    if not is_f2_intention_eligible(intent):
+        return {
+            "use_f2": False,
+            "skipped_reason": "intention_not_eligible",
+            "bundle": None,
+        }
+
+    bundle = build_f2_bundle(s3_output, intent, context)
+    if bundle.skipped_reason:
+        return {
+            "use_f2": False,
+            "skipped_reason": bundle.skipped_reason,
+            "bundle": None,
+        }
+    return {"use_f2": True, "skipped_reason": None, "bundle": bundle}
+
+
+def assemble_narratif_document_blocks(
+    bundle: F2ReportBundle,
+    *,
+    meta: dict[str, Any],
+    verdict_data: dict[str, Any],
+    chart_items: list[dict[str, Any]],
+    reco_rows: list[dict[str, Any]],
+    trace_block: Any,
+    dunn_annexe: list[dict[str, Any]] | None = None,
+) -> list[Any]:
+    """Assemble les ReportBlock pour le mode narratif_metier F2."""
+    from systems.s7.document import ReportBlock
+
+    blocks: list[Any] = [
+        ReportBlock("cover", {"meta": meta}),
+        ReportBlock("verdict", verdict_data),
+    ]
+    for key in F2_NARRATIF_BLOCKS_BEFORE_CHARTS:
+        blocks.append(ReportBlock(key, dict(bundle.blocks[key])))
+    blocks.append(
+        ReportBlock(
+            "charts",
+            {"items": chart_items, "section_title": "GRAPHIQUES"},
+        )
+    )
+    for key in F2_NARRATIF_BLOCKS_AFTER_CHARTS:
+        blocks.append(ReportBlock(key, dict(bundle.blocks[key])))
+    blocks.append(ReportBlock("recommendations", {"items": reco_rows}))
+    if dunn_annexe:
+        blocks.append(ReportBlock("annexe_dunn", {"items": dunn_annexe}))
+    blocks.append(trace_block)
+    return blocks
 
 
 def collect_all_numeric_values(block: dict) -> set[float]:

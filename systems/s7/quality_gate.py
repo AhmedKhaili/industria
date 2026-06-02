@@ -42,6 +42,38 @@ _CONTRA_EN9100 = [
 ]
 
 
+def _apply_f2_narratif_gate(
+    document: "ReportDocument | None",
+    cfg: dict,
+    blocking: list[str],
+    warnings: list[str],
+) -> None:
+    if not document:
+        return
+    render_mode = str((document.meta or {}).get("render_mode", "")).lower()
+    if render_mode != "narratif_metier":
+        return
+    ck = document.find("conclusion_key")
+    if not ck or not (ck.data.get("paragraphs") or ck.data.get("facts")):
+        msg = "conclusion_key absente ou vide en mode narratif_metier F2"
+        if prep.is_client_mode(cfg):
+            blocking.append(msg)
+        else:
+            warnings.append(msg)
+    limits = document.find("interpretation_limits")
+    if not limits or not limits.data.get("paragraphs"):
+        msg = "interpretation_limits absente en mode narratif_metier F2"
+        if prep.is_client_mode(cfg):
+            blocking.append(msg)
+        else:
+            warnings.append(msg)
+    if prep.text_contains_forbidden_causality(document.all_text()):
+        blocking.append(
+            "Vocabulaire causal interdit dans le rapport narratif F2 "
+            "(cause / prouve / démontre une causalité)"
+        )
+
+
 def run(
     question_originale: str,
     intent: dict,
@@ -56,7 +88,12 @@ def run(
     blocking: list[str] = []
     warnings: list[str] = []
     if not prep.is_client_mode(cfg):
-        return {"blocking": [], "warnings": warnings, "publishable": True}
+        _apply_f2_narratif_gate(document, cfg, blocking, warnings)
+        return {
+            "blocking": blocking,
+            "warnings": warnings,
+            "publishable": len(blocking) == 0,
+        }
 
     specialist_results = list(s3_output.get("specialist_results") or [])
     min_c = prep.min_cpk(specialist_results)
@@ -155,6 +192,8 @@ def run(
                 )
         except Exception as exc:  # noqa: BLE001
             warnings.append(f"Contrôle nombre de pages ignoré : {exc}")
+
+    _apply_f2_narratif_gate(document, cfg, blocking, warnings)
 
     publishable = len(blocking) == 0
     return {"blocking": blocking, "warnings": warnings, "publishable": publishable}

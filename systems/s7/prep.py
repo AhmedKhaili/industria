@@ -114,6 +114,27 @@ _OPERATEUR_SUBSTITUTIONS: list[tuple[re.Pattern[str], str]] = [
 _GRAPH_ONLY_RE = re.compile(r"^graphique\s*:", re.I)
 
 
+_RENDER_MODES = frozenset({"audit_en9100", "narratif_metier"})
+
+
+def resolve_render_mode(intent: dict, cfg: dict) -> str:
+    """Mode de rendu PDF — défaut audit_en9100."""
+    explicit = str(intent.get("rapport_mode") or "").strip()
+    if explicit in _RENDER_MODES:
+        return explicit
+    default = str(cfg.get("default_mode", "audit_en9100")).strip()
+    if default in _RENDER_MODES:
+        return default
+    return "audit_en9100"
+
+
+def text_contains_forbidden_causality(text: str) -> bool:
+    """Formulations causales positives abusives (pas les limites prudente/négatives)."""
+    from systems.s7.f2_templates import text_contains_abusive_causality
+
+    return text_contains_abusive_causality(text)
+
+
 def rapport_pdf_config(context: "ClientContext") -> dict:
     raw = context.get_rapport_pdf()
     cfg = dict(_DEFAULT_RAPPORT_PDF)
