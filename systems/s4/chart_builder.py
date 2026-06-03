@@ -343,7 +343,10 @@ def build_timeseries_chart(
     variable: str,
     context: "ClientContext",
     intent: dict,
+    *,
+    specialist_results: list[dict] | None = None,
 ) -> dict:
+    _ = specialist_results
     try:
         unit = _unit_label(context, intent, variable)
         col_date = context.colonnes.get("temps", "Date")
