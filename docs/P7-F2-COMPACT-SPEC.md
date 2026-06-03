@@ -97,7 +97,7 @@ Un groupe entre dans **`rows_reliable`** si :
 
 1. `n` ≥ seuil (`rapport_pdf.f2_compact.min_n_measure` ou défaut aligné S3) ;
 2. Pas de valeur manquante bloquante ;
-3. `group_value` conforme au **pattern** YAML (`group_value_pattern`) ;
+3. `group_value` conforme au **pattern** YAML (`group_value_pattern`) — priorité : `entites.facteurs_analyse.<OP>.<facteur>.group_value_pattern` si `colonne` = `group_by`, sinon `rapport_pdf.f2_compact.group_value_pattern` ;
 4. Absent de la **denylist** (`group_value_denylist`) ;
 5. Classement S3 (`rank`) conservé parmi les fiables.
 
@@ -322,10 +322,102 @@ build_timeseries_chart() got an unexpected keyword argument 'specialist_results'
 
 ---
 
-## 18. Validation documentaire (2026-06-03)
+## 18. FILAGE / pastilles — règles métier et cas F2 reportés
+
+> **Statut** : hors campagne F2 compact v1 (export `lisi_capteurs.csv` sans colonnes/tags passage exploitables).  
+> **Référence YAML** : `configs/lisi_aerospace/client_config.yaml` — **aucune règle P1/P2 ou retaille hardcodée** en S2/S3/S7 (application via `dataset.regles_nettoyage` dans `systems/s2/cleaner.py`).
+
+### Règles métier pastille (validées dans le YAML)
+
+| Champ / colonne | Règle métier | Expression YAML actuelle |
+|-----------------|--------------|-------------------------|
+| `PAS_E_Numero_Passage`, `PAS_I_Numero_Passage` | Valeurs **uniquement** `P1` ou `P2` ; toute autre valeur → non exploitable / anomalie | `valeurs_valides: ["P1", "P2"]` + `action: supprimer_si_invalide` |
+| `PAS_E_Niveau_Retaille`, `PAS_I_Niveau_Retaille` | Seules les valeurs **≤ 0** pour les comparaisons métier ; strictement positives → exclues | `condition: "<= 0"` + `action: supprimer_si_invalide` |
+
+Chemins exacts : `dataset.regles_nettoyage.PAS_E_Numero_Passage` (et symétriques `_I_`, `Niveau_Retaille`).
+
+**Limite actuelle (données, pas règles)** : l’export LONG ne contient ni colonnes `PAS_*_Numero_Passage`, ni tags `Tag/Value` avec `Value` renseigné pour le passage ; les tags `PAS_E` / `PAS_I` existent mais sans `Value` pivotable. S2 **n’efface pas** ces règles : les colonnes sont **absentes** → règles **skipped** (`colonne_absente`).
+
+### Cas F2 FILAGE / pastille à tester plus tard (après enrichissement export)
+
+Prérequis données : colonnes wide ou tags LONG `PAS_E_Numero_Passage` / `PAS_I_Numero_Passage` avec valeurs `P1`/`P2`, et retaille ≤ 0 appliquée par S2 avant pivot.
+
+| Cas envisagé | Question type | Variable | Facteur | Notes |
+|--------------|---------------|----------|---------|-------|
+| Passage ext. | `Comparer CR1 selon le numero de passage pastille ext sur {piece} au filage` | `CR1` (ou autre `CRx`) | `PAS_E_Numero_Passage` | Vérifier effectifs P1 vs P2 ; groupes hors {P1,P2} → **non exploités** |
+| Passage int. | Idem pastille **int** | `CR1` | `PAS_I_Numero_Passage` | Même règle P1/P2 |
+| Passage combiné | Comparaison si les deux colonnes sont dans le wide post-pivot | `CR1` | `PAS_E` + `PAS_I` (à trancher métier) | S1 peut résoudre `group_by` bi-colonnes — à valider avec métier |
+
+**Contrôles attendus lors des futurs runs** :
+
+- S2 `cleaning_stats.rules` : `applied` sur les 4 colonnes (pas `skipped`) ;
+- valeurs passage ∉ {P1,P2} dans `df_anomalies` ou absentes de `df_propre` ;
+- retaille > 0 exclue avant F2 ;
+- F2 compact : facteur passage avec peu de groupes (2–4 max) — PDF court, pas de pattern matrice `^O\d{7}` sur P1/P2.
+
+**Non retenu tant que source vide** : `Comparer CR1 selon l’ordre de passage de la pastille` (question ambiguë ext/int sans pièce/opération).
+
+---
+
+## 19. Campagne validation LISI multi-cas (2026-06-03)
+
+> **Statut F2 compact v1** : validé fonctionnellement sur données réelles `data/lisi_capteurs.csv` (activation `f2_compact_enabled` **en mémoire** pour les runs ; **non** activé par défaut dans le YAML).
+
+### Cas testés
+
+| ID | Question (résumé) | Pièce / op. | Facteur | Pattern matrice | Verdict compact | Statut |
+|----|-------------------|-------------|---------|-----------------|-----------------|--------|
+| **B** | CR50 intrados vrillage × four | RD4L1A1C / EQUATOR | `Numero Machine` | — | SURVEILLANCE | Validé |
+| **C** | CR1 × presse | RD4L1A1C / FILAGE | `Numero Machine` | — | NO-GO | Validé |
+| **D** | CR10 intrados forme × matrice | M2L1A1C / EQUATOR | `Ref_Matrice` | `^O\d{7}$` (test) | SURVEILLANCE (dégénéré) | **Non validé** (config) |
+| **D bis** | Idem D | M2L1A1C / EQUATOR | `Ref_Matrice` | `^O\d{7}[A-Z0-9-]*$` | SURVEILLANCE | Validé |
+
+PDF de référence (runs campagne, non versionnés) : `reports/f2_compact_B_cr50_four_RD4L1A1C_equator.pdf`, `f2_compact_C_cr1_presse_RD4L1A1C_filage.pdf`, `f2_compact_D_cr10_matrice_M2L1A1C_equator.pdf`, `f2_compact_D_cr10_matrice_M2L1A1C_equator_bis.pdf`.
+
+### Pattern matrice LISI retenu
+
+**Expression** : `^O\d{7}[A-Z0-9-]*$`
+
+**Chemin YAML** (persisté) :
+
+```yaml
+entites.facteurs_analyse.EQUATOR.matrice.group_value_pattern
+```
+
+**Consommation S7** : `f2_compact_selection._resolve_group_pattern()` — le pattern facteur est lu **en premier** lorsque `group_by` correspond à `colonne` (`Ref_Matrice`).
+
+| `group_value` | Résultat attendu |
+|---------------|------------------|
+| `O5220911B3-0` | Fiable (si n ≥ seuil) |
+| `O5220911B2-0` | Fiable |
+| `O5220911C1` | Fiable |
+| `M748710` | Exclu — `pattern_yaml_non_respecte` (identifiant type machine, pas référence matrice O…) |
+
+**Échec D initial** : le pattern `^O\d{7}$` (ancré fin de chaîne après 7 chiffres) **rejette** les suffixes réels (`B3-0`, `C1`, etc.) → 0 groupe fiable → rapport dégénéré. **Ce n’est pas une régression pipeline.**
+
+**Variante rejetée** : `rapport_pdf.f2_compact.group_value_pattern` seul — équivalent fonctionnel si le facteur n’est pas renseigné, mais moins précis (s’appliquerait à tout run compact utilisant ce bloc YAML global).
+
+### Groupes fiables / exclus (résumé campagne)
+
+- **B** : 8 fiables / 3 exclus (P03, M2346B, M2348B — effectif &lt; 6).
+- **C** : 2 fiables (M1994, M1567) / 2 exclus (M1503, M790).
+- **D bis** : 3 fiables (O5220911B3-0, O5220911B2-0, O5220911C1) / 1 exclu (M748710).
+
+### Anomalies hors pattern
+
+- Warnings contrat A4 (verdict GO/NO-GO « premières sections », tableau Cpk global, reco) — **attendus** en mode F2 compact.
+- Cas pastilles FILAGE : hors campagne (§18).
+
+---
+
+## 20. Validation documentaire (2026-06-03)
 
 - [x] Spec alignée implémentation C1 → D4b  
 - [x] Section v1 candidate §16  
+- [x] Règles FILAGE / pastille documentées §18  
+- [x] Campagne multi-cas documentée §19  
+- [x] Pattern matrice LISI persisté (`entites…EQUATOR.matrice.group_value_pattern`)  
 - [x] Limites et commits référencés  
-- [ ] Persistance YAML LISI compact (chantier config, post-v1)  
+- [ ] Activation produit `f2_compact_enabled: true` (décision séparée)  
+- [ ] Export enrichi pastille (passage P1/P2 + retaille en colonnes ou Tag/Value)  
 - [ ] Correction S4 `test_tendance_timeseries` (§17 option A)

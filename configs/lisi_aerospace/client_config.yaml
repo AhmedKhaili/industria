@@ -154,6 +154,8 @@ entites:
         description: "référence de la matrice de formage utilisée lors du contrôle métrologique EQUATOR"
         libelle_court: "Matrice"
         colonne: "Ref_Matrice"
+        # F2 compact — références O + 7 chiffres + suffixe (ex. O5220911B3-0) ; exclut identifiants machine (ex. M748710)
+        group_value_pattern: '^O\d{7}[A-Z0-9-]*$'
         synonymes: [moule, ref matrice, référence matrice, outil de formage, matrice de formage]
     COMMUN:
       machine:
