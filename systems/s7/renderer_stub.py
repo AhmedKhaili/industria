@@ -24,6 +24,7 @@ from reportlab.platypus import (
 )
 
 from systems.s7.document import ReportDocument
+from systems.s7.f2_compact_display import looks_like_matrix_group_code
 
 _CONTENT_WIDTH = 180 * mm
 _PRIO_COLORS = {
@@ -242,6 +243,16 @@ def render_pdf(
     def clean(text: str) -> str:
         return _sanitize(text, formatters_mod, client_mode=client_mode)
 
+    def clean_cell(text: str) -> str:
+        """Préserve les codes matrices (ex. O5220910A2-2) en F2 compact."""
+        raw = str(text or "")
+        if is_f2_compact and looks_like_matrix_group_code(raw):
+            out = raw.replace("None", "N/A")
+            if formatters_mod is not None and hasattr(formatters_mod, "sanitize_for_pdf"):
+                out = formatters_mod.sanitize_for_pdf(out)
+            return out
+        return clean(raw)
+
     for block in document.blocks:
         btype = block.block_type
         data = block.data
@@ -292,15 +303,45 @@ def render_pdf(
                 )
             )
             story.extend([tbl, Spacer(1, 6 * mm)])
-            q = clean(str(m.get("question", "")))
-            qstyle = ParagraphStyle(
-                "cover_question",
-                parent=styles["body"],
-                fontName="Helvetica-Bold",
-                fontSize=11,
-                leading=14,
-            )
-            story.append(Paragraph(f"Question : {q}", qstyle))
+            if is_f2_compact:
+                report_title = clean(str(m.get("report_title", "")))
+                if report_title and report_title != "N/A":
+                    title_style = ParagraphStyle(
+                        "cover_report_title",
+                        parent=styles["body"],
+                        fontName="Helvetica-Bold",
+                        fontSize=12,
+                        leading=15,
+                    )
+                    story.append(Paragraph(report_title, title_style))
+                    story.append(Spacer(1, 3 * mm))
+                q_tech = str(
+                    m.get("question_technique") or m.get("question") or ""
+                ).strip()
+                if q_tech:
+                    tech_style = ParagraphStyle(
+                        "cover_question_technique",
+                        parent=styles["body"],
+                        fontSize=9,
+                        leading=12,
+                        textColor=colors.grey,
+                    )
+                    story.append(
+                        Paragraph(
+                            f"Référence technique : {clean(q_tech)}",
+                            tech_style,
+                        )
+                    )
+            else:
+                q = clean(str(m.get("question", "")))
+                qstyle = ParagraphStyle(
+                    "cover_question",
+                    parent=styles["body"],
+                    fontName="Helvetica-Bold",
+                    fontSize=11,
+                    leading=14,
+                )
+                story.append(Paragraph(f"Question : {q}", qstyle))
             story.append(PageBreak())
 
         elif btype == "verdict":
@@ -713,7 +754,10 @@ def render_pdf(
                 _append_paragraphs(story, data.get("paragraphs"), styles, clean)
             elif btype == "key_indicators":
                 rows = [
-                    [clean(str(r.get("label", ""))), clean(str(r.get("value", "")))]
+                    [
+                        clean(str(r.get("label", ""))),
+                        clean_cell(str(r.get("value", ""))),
+                    ]
                     for r in data.get("rows") or []
                     if isinstance(r, dict)
                 ]
@@ -731,12 +775,13 @@ def render_pdf(
                     story.append(Paragraph(clean(str(note)), styles["body"]))
             elif btype == "group_comparison_table":
                 cols = list(data.get("columns") or [])
+                cell_clean = clean_cell if is_f2_compact else clean
                 _render_table_from_columns(
                     story,
                     cols,
                     list(data.get("rows") or []),
                     styles,
-                    clean,
+                    cell_clean,
                 )
                 foot = data.get("footnote")
                 if foot:
@@ -747,6 +792,7 @@ def render_pdf(
                     story.append(Paragraph(clean(str(note)), styles["body"]))
                 rel_cols = list(data.get("columns") or [])
                 rel_rows = list(data.get("rows") or [])
+                cell_clean = clean_cell if is_f2_compact else clean
                 if rel_cols and rel_rows:
                     cap_style = ParagraphStyle(
                         "reliability_cell",
@@ -766,7 +812,7 @@ def render_pdf(
                         table_rows.append(
                             [
                                 Paragraph(
-                                    clean(str(row.get(c, "—"))),
+                                    cell_clean(str(row.get(c, "—"))),
                                     cap_style,
                                 )
                                 for c in rel_cols
@@ -807,7 +853,7 @@ def render_pdf(
                     story.append(Paragraph(clean(str(summary)), styles["caption"]))
                 ex_rows = [
                     [
-                        clean(str(r.get("group_value", ""))),
+                        clean_cell(str(r.get("group_value", ""))),
                         clean(str(r.get("n", "—"))),
                         clean(str(r.get("reason_label", ""))),
                         clean(str(r.get("detail", ""))),
@@ -868,7 +914,7 @@ def render_pdf(
                     story.append(
                         Paragraph(
                             f"• {clean(str(item.get('rank')))}. "
-                            f"{clean(str(item.get('group_value')))} "
+                            f"{clean_cell(str(item.get('group_value')))} "
                             f"({clean(str(item.get('severity_display', '')))})",
                             styles["body"],
                         )

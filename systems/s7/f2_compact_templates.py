@@ -7,13 +7,18 @@ from __future__ import annotations
 from typing import Any
 
 from systems.s7 import f2_templates
+from systems.s7.f2_compact_display import (
+    _fmt_num,
+    _fmt_pct,
+    ci95_display,
+)
 from systems.s7.f2_templates import assert_no_causality_abuse, severity_display
 
 
 _EXCLUSION_LABELS = {
     "effectif_insuffisant": "Effectif insuffisant",
     "valeur_manquante": "Valeur manquante",
-    "pattern_yaml_non_respecte": "Hors pattern YAML",
+    "pattern_yaml_non_respecte": "Hors format matrice",
     "groupe_parasite": "Groupe parasite (denylist)",
     "warning_s3_autre": "Avertissement S3",
 }
@@ -79,29 +84,61 @@ def _row_metrics_phrase(row: dict[str, Any] | None) -> str:
     pct = row.get("out_of_tolerance_rate")
     if pct is not None:
         try:
-            parts.append(f"{float(pct):.1f} % hors tolérance".replace(".", ","))
+            parts.append(f"{_fmt_pct(pct)} hors tolérance")
         except (TypeError, ValueError):
             pass
     cpk = row.get("cpk")
     if cpk is not None:
         try:
-            parts.append(f"Cpk {float(cpk):.2f}".replace(".", ","))
+            parts.append(f"Cpk {_fmt_num(cpk, 2)}")
         except (TypeError, ValueError):
             pass
     ci = row.get("ci95_out_of_tolerance_rate")
     if isinstance(ci, dict):
-        label = ci.get("label")
-        if label:
-            parts.append(f"IC95 % HT : {label}")
-        elif ci.get("low") is not None and ci.get("high") is not None:
-            parts.append(
-                f"IC95 % HT : [{ci['low']} % ; {ci['high']} %]"
-            )
+        ic_disp = ci95_display(ci, as_percent=True)
+        if ic_disp != "IC95 non disponible":
+            parts.append(f"IC95 % HT : {ic_disp}")
     return ", ".join(parts)
 
 
-def _fmt_num(value: Any, decimals: int = 3) -> str:
-    return f"{float(value):.{decimals}f}".replace(".", ",")
+def _metrics_summary_phrase(
+    *,
+    worst_pct: float | None,
+    worst_cpk: float | None,
+) -> str:
+    parts: list[str] = []
+    if worst_pct is not None:
+        parts.append(f"{_fmt_pct(worst_pct)} hors tolérance")
+    if worst_cpk is not None:
+        parts.append(f"Cpk {_fmt_num(worst_cpk, 2)}")
+    return ", ".join(parts) if parts else "indicateurs défavorables"
+
+
+def _paragraph_critique_compact(
+    *,
+    group_value: str,
+    pct: float | None,
+    cpk: float | None,
+    worse_direction: str,
+    unit: str,
+) -> str:
+    bits: list[str] = []
+    if pct is not None:
+        bits.append(f"le taux hors tolérance le plus élevé ({_fmt_pct(pct)})")
+    if cpk is not None:
+        bits.append(f"un Cpk de {_fmt_num(cpk, 2)}")
+    detail = " et ".join(bits) if bits else "des indicateurs défavorables"
+    direction_hint = ""
+    if worse_direction == "upper":
+        direction_hint = " vis-à-vis des limites hautes"
+    elif worse_direction == "lower":
+        direction_hint = " vis-à-vis des limites basses"
+    text = (
+        f"{_referent_singular(unit, group_value)} se distingue par {detail}{direction_hint}, "
+        "ce qui correspond au classement le plus défavorable de cette analyse."
+    )
+    assert_no_causality_abuse(text)
+    return text
 
 
 def _referent_singular(unit: str, group_value: str) -> str:
@@ -139,12 +176,7 @@ def conclusion_key_paragraphs(
         assert_no_causality_abuse(text)
         return [text]
 
-    parts: list[str] = []
-    if worst_pct is not None:
-        parts.append(f"{worst_pct:.1f} % hors tolérance")
-    if worst_cpk is not None:
-        parts.append(f"Cpk {worst_cpk:.2f}")
-    metrics = ", ".join(parts) if parts else "indicateurs défavorables"
+    metrics = _metrics_summary_phrase(worst_pct=worst_pct, worst_cpk=worst_cpk)
     p1 = (
         f"Le groupe {worst_group} présente le profil le plus défavorable "
         f"({metrics}) parmi les groupes fiables retenus."
@@ -189,9 +221,9 @@ def verdict_bullets_compact(
     if worst_group:
         detail: list[str] = []
         if worst_pct is not None:
-            detail.append(f"{worst_pct:.1f} % HT")
+            detail.append(f"{_fmt_pct(worst_pct)} HT")
         if worst_cpk is not None:
-            detail.append(f"Cpk {worst_cpk:.2f}")
+            detail.append(f"Cpk {_fmt_num(worst_cpk, 2)}")
         suffix = f" ({', '.join(detail)})" if detail else ""
         bullets.append(f"Groupe prioritaire : {worst_group}{suffix}.")
     bullets.append(f"Verdict : {verdict.label}.")
@@ -256,11 +288,12 @@ def business_reading_sections_compact(
     p_w = (
         f"{_referent_singular(unit, gv_w)} concentre le profil le plus défavorable"
         f" ({metrics_w})." if metrics_w else
-        f2_templates.business_reading_paragraph_critique(
+        _paragraph_critique_compact(
             group_value=gv_w,
             pct=worst_row.get("out_of_tolerance_rate"),
             cpk=worst_row.get("cpk"),
             worse_direction=worse_direction,
+            unit=unit,
         )
     )
     sections.append(
@@ -324,10 +357,10 @@ def business_reading_sections_compact(
         gv_b = str(favorable_row.get("group_value", ""))
         metrics_b = _row_metrics_phrase(favorable_row)
         p_lim = (
-            f"Référence favorable à confirmer : {_referent_singular(unit, gv_b).lower()}"
+            f"Référence favorable à confirmer : {_referent_singular(unit, gv_b)}"
             f" ({metrics_b})."
             if metrics_b
-            else f"Référence favorable à confirmer : {_referent_singular(unit, gv_b).lower()}."
+            else f"Référence favorable à confirmer : {_referent_singular(unit, gv_b)}."
         )
         sections.append(
             {

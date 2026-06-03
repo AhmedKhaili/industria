@@ -10,6 +10,16 @@ from typing import Any
 
 from systems.s7 import f2_pedagogy, f2_templates, prep
 from systems.s7.document import ReportBlock, ReportDocument
+from systems.s7.f2_compact_display import (
+    ci95_display,
+    compact_level_display,
+    compact_report_title,
+    exclusion_detail_client,
+    favorable_indicator_label,
+    priority_entity_label,
+    _fmt_num,
+    _fmt_pct,
+)
 from systems.s7.f2_compact_labels import (
     analysis_level_label,
     resolve_factor_label,
@@ -95,6 +105,7 @@ def build_f2_compact_document(
         primary_block or {"level": selection.level}, context
     )
     title = synthesis_title(variable_label, factor_label)
+    report_title = compact_report_title(variable_label, factor_label)
 
     verdict = compute_compact_verdict(selection, context, cfg)
     chart_items = build_compact_chart_items(
@@ -111,6 +122,8 @@ def build_f2_compact_document(
         "timestamp": ts,
         "profile": profile,
         "question": question,
+        "report_title": report_title,
+        "question_technique": question,
         "reference": prep.report_reference(ts, cfg),
         "verdict": verdict.label,
         "verdict_key": verdict.verdict_key,
@@ -322,12 +335,15 @@ def _build_block_map(
         min_cpk_val,
         min_cpk_row,
         selection.level,
+        factor_label=factor_label,
+        favorable_strength=favorable_strength if has_distinct_favorable else "none",
     )
 
     comparison_table = _build_group_comparison_table(
         rows[:max_rows],
         worse_direction,
         factor_label,
+        verdict_key=verdict.verdict_key,
     )
 
     how_cpk = f2_pedagogy.build_how_to_read_cpk(
@@ -380,8 +396,9 @@ def _build_block_map(
                 "rank": r.get("rank"),
                 "group_value": r.get("group_value"),
                 "severity_label": r.get("severity_label"),
-                "severity_display": f2_templates.severity_display(
-                    str(r.get("severity_label", ""))
+                "severity_display": compact_level_display(
+                    str(r.get("severity_label", "")),
+                    verdict_key=verdict.verdict_key,
                 ),
             }
             for r in rows[:5]
@@ -409,7 +426,7 @@ def _build_block_map(
                 "n": e.n,
                 "exclusion_reason": e.exclusion_reason,
                 "reason_label": exclusion_reason_label(e.exclusion_reason),
-                "detail": e.detail,
+                "detail": exclusion_detail_client(e.exclusion_reason, e.detail),
             }
             for e in selection.rows_excluded
         ],
@@ -469,20 +486,24 @@ def _build_key_indicators(
     min_cpk_val: float | None,
     min_cpk_row: dict | None,
     analysis_level: str,
+    *,
+    factor_label: str = "",
+    favorable_strength: str = "none",
 ) -> dict[str, Any]:
     unit = "unités" if analysis_level == "aggregated_unit" else "mesures"
+    prio_label = priority_entity_label(factor_label)
     rows_out: list[dict[str, Any]] = [
         {
-            "label": "Groupe le plus critique",
+            "label": prio_label,
             "value": worst_group or "—",
-            "sub": "rang 1 — critique",
+            "sub": "rang 1 — prioritaire",
         },
     ]
     if worst and worst.get("out_of_tolerance_rate") is not None:
         raw = worst["out_of_tolerance_rate"]
         rows_out.append(
             {
-                "label": "Taux hors tolérance (groupe critique)",
+                "label": "Taux hors tolérance (groupe prioritaire)",
                 "value": _fmt_pct(raw),
                 "raw": raw,
             }
@@ -497,18 +518,24 @@ def _build_key_indicators(
             }
         )
     if best_group:
+        fav_label = favorable_indicator_label(favorable_strength)
+        fav_sub = (
+            "à confirmer"
+            if str(favorable_strength).lower() == "limited"
+            else f"rang {best.get('rank') if best else '—'} — favorable"
+        )
         rows_out.append(
             {
-                "label": "Groupe le plus favorable",
+                "label": fav_label,
                 "value": best_group,
-                "sub": f"rang {best.get('rank') if best else '—'} — favorable",
+                "sub": fav_sub,
             }
         )
     if worst and worst.get("n") is not None:
         n = worst["n"]
         rows_out.append(
             {
-                "label": "Effectif analysé (groupe critique)",
+                "label": "Effectif analysé (groupe prioritaire)",
                 "value": f"{n} {unit}",
                 "raw_n": n,
             }
@@ -525,6 +552,8 @@ def _build_group_comparison_table(
     rows: list[dict[str, Any]],
     worse_direction: str,
     factor_label: str,
+    *,
+    verdict_key: str,
 ) -> dict[str, Any]:
     table_rows: list[dict[str, Any]] = []
     for row in rows:
@@ -546,14 +575,15 @@ def _build_group_comparison_table(
                 "cpk_display": _fmt_num(row.get("cpk")),
                 "rank": row.get("rank"),
                 "severity_label": row.get("severity_label"),
-                "severity_display": f2_templates.severity_display(
-                    str(row.get("severity_label", ""))
+                "severity_display": compact_level_display(
+                    str(row.get("severity_label", "")),
+                    verdict_key=verdict_key,
                 ),
             }
         )
     foot = (
         "Classement : taux hors tolérance décroissant, puis Cpk croissant, "
-        f"puis proximité à la limite critique (direction : {worse_direction})."
+        f"puis proximité aux limites hors tolérance (direction : {worse_direction})."
     )
     return {
         "title": f"Comparaison des groupes — {factor_label}",
@@ -585,10 +615,11 @@ def _build_statistical_reliability(
                 "Groupe": row.get("group_value"),
                 "n": row.get("n"),
                 "Moyenne": _fmt_num(row.get("mean")),
-                "IC95 moyenne": _ci95_display(row.get("ci95_mean")),
+                "IC95 moyenne": ci95_display(row.get("ci95_mean")),
                 "% hors tolérance": _fmt_pct(row.get("out_of_tolerance_rate")),
-                "IC95 % hors tolérance": _ci95_display(
-                    row.get("ci95_out_of_tolerance_rate")
+                "IC95 % hors tolérance": ci95_display(
+                    row.get("ci95_out_of_tolerance_rate"),
+                    as_percent=True,
                 ),
                 "Cpk": _fmt_num(row.get("cpk")),
                 "Statut fiabilité": _reliability_status(row),
@@ -611,18 +642,6 @@ def _build_statistical_reliability(
         "rows": table_rows,
         "limits_paragraph": f2_templates.reliability_limits_paragraph(selection.level),
     }
-
-
-def _ci95_display(ci: Any) -> str:
-    if not isinstance(ci, dict):
-        return "IC95 non disponible"
-    label = ci.get("label")
-    if label:
-        return str(label)
-    low, high = ci.get("low"), ci.get("high")
-    if low is not None and high is not None:
-        return f"[{low} ; {high}]"
-    return "IC95 non disponible"
 
 
 def _reliability_status(row: dict[str, Any]) -> str:
@@ -684,19 +703,3 @@ def _float_or_none(value: Any) -> float | None:
         return None
 
 
-def _fmt_num(value: Any, decimals: int = 3) -> str:
-    if value is None:
-        return "—"
-    try:
-        return f"{float(value):.{decimals}f}".replace(".", ",")
-    except (TypeError, ValueError):
-        return "—"
-
-
-def _fmt_pct(value: Any) -> str:
-    if value is None:
-        return "—"
-    try:
-        return f"{float(value):.1f} %".replace(".", ",")
-    except (TypeError, ValueError):
-        return "—"

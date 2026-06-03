@@ -289,7 +289,7 @@ def test_renderer_smoke_and_page_count(
     page_count = len(reader.pages)
     assert 4 <= page_count <= 6
     text = "\n".join((p.extract_text() or "") for p in reader.pages)
-    assert "Synthèse métier" in text or "Synth" in text
+    assert "Comparaison" in text
     assert "Groupes non exploités" in text
     assert "GROUPE_A" in text
     for name in _EXCLUDED:

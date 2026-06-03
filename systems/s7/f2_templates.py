@@ -133,11 +133,11 @@ def hors_tolerance_definition(analysis_level: str) -> str:
     if analysis_level == "aggregated_unit":
         return (
             "Une unité métier est hors tolérance lorsque sa valeur agrégée "
-            "(ex. moyenne des mesures de l'unité) est en dehors de l'intervalle LTI–LTS."
+            "(ex. moyenne des mesures de l'unité) est en dehors de l'intervalle LTI/LTS."
         )
     return (
         "Une mesure est hors tolérance lorsque sa valeur est en dehors "
-        "de l'intervalle LTI–LTS."
+        "de l'intervalle LTI/LTS."
     )
 
 

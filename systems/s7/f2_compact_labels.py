@@ -65,9 +65,9 @@ def resolve_factor_label(
 
 
 def synthesis_title(variable_label: str, factor_label: str) -> str:
-    return (
-        f"Synthèse métier — Comparaison de {variable_label} selon {factor_label}"
-    )
+    from systems.s7.f2_compact_display import compact_report_title
+
+    return compact_report_title(variable_label, factor_label)
 
 
 def tolerances_for_variable(
@@ -95,7 +95,7 @@ def tolerances_for_variable(
             "nominal": float(nominal) if nominal is not None else None,
             "unit": unit,
             "interval_display": (
-                f"[{_fmt_num(lti)} ; {_fmt_num(lts)}]"
+                f"intervalle LTI/LTS [{_fmt_num(lti)} ; {_fmt_num(lts)}]"
                 f"{(' ' + unit) if unit else ''}"
             ),
         }
