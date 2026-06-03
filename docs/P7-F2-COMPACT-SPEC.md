@@ -1,385 +1,331 @@
-# P7-F2 compact — Spec formelle (Phase B)
+# P7-F2 compact — Spec formelle (Phase B → v1 candidate)
 
-> **Statut** : SPEC — à valider avant implémentation Phase C  
-> **Version** : 1.1 — 2026-06-02 (verrouillage libellés YAML + groupes non exploités)  
+> **Statut** : **IMPLÉMENTÉ** — v1 candidate gelée (code F2 compact figé sur `0d7f43d`)  
+> **Version doc** : 2.0 — 2026-06-03 (alignement C1 → D4b)  
 > **Remplace** : tunnel `narratif_metier` long (P7-F2a–c, gelé via `f2_narratif_enabled: false`)  
-> **Référence métier** : rapport vrillage (4 p., dense, quali × quanti)  
-> **Non-cible** : rapport portrait F1 (une variable, pas de facteur qualitatif)
+> **Référence métier** : rapport vrillage LISI (comparaison matrice × CR50, ~5 p.)  
+> **Non-cible** : rapport portrait F1 ; agrégation OF (hors v1)
 
 ---
 
 ## 0. Objet
 
-Définir un PDF **F2 compact** pour l’intention S1 `comparaison_groupes` : comparer **une mesure quantitative** ventilée par **un facteur qualitatif** (matrice, machine, fournisseur…).
+PDF **F2 compact** pour l’intention S1 `comparaison_groupes` : comparer **une mesure quantitative** ventilée par **un facteur qualitatif** (matrice, machine, fournisseur…).
 
-Objectifs :
+Objectifs atteints en v1 :
 
-- **4 à 6 pages** (pas 14).
-- **Cohérence** : verdict, tableau et synthèse lisent la **même** source filtrée.
-- **Densité métier** : inspiré du rapport vrillage, pas du portrait statistique.
-- **Zéro LLM en S7** ; zéro chiffre inventé ; zéro règle métier hardcodée en Python.
+- **4 à 6 pages** (LISI RD4 CR50 : 5 pages).
+- **Cohérence** : verdict, tableaux et textes lisent la **même** sélection filtrée (`F2CompactSelection`).
+- **Densité métier** : inspiré du rapport vrillage, sans narratif long.
+- **Zéro LLM en S7** ; zéro chiffre inventé ; seuils et filtres depuis **YAML** (pas de règles métier LISI en dur).
+
+**Implémentation** : `systems/s7/f2_compact_*.py`, branchement `a1_assembler`, rendu `renderer_stub` (mode `f2_compact`), filtre boxplot S4 via `intent["chart_include_group_values"]` (D3).
 
 ---
 
 ## 1. Périmètre et déclenchement
 
-| Élément | Règle |
-|---------|--------|
+| Élément | Règle (v1) |
+|---------|------------|
 | Intention S1 | `comparaison_groupes` (famille P6 **F2** `bivariate_quali_quanti`) |
-| Donnée S3 requise | Bloc `group_descriptive` (niveau `aggregated_unit` si config active, sinon `measure` avec mention explicite) |
-| Test global | Résultat `anova_kruskal` ou équivalent dans `specialist_results` |
-| Graphique | 1 boxplot S4 par variable × `group_by` (plafond YAML) |
-| Mode rendu | Nouveau plan **F2 compact** dans S7 — **distinct** de `narratif_metier` gelé et de l’audit simple v5c |
-| Activation | `rapport_pdf.f2_compact_enabled: true` (défaut à définir en Phase C ; **false** tant que non implémenté) |
+| Donnée S3 requise | Bloc `group_descriptive` (`measure` ou `aggregated_unit` si config active) |
+| Test global | `anova_kruskal` (ou équivalent) dans `specialist_results` |
+| Graphique | 1 boxplot S4 par variable × `group_by`, **groupes fiables uniquement** si liste intent fournie |
+| Mode rendu | `meta.render_mode = "f2_compact"` |
+| Activation | **`rapport_pdf.f2_compact_enabled: true`** (défaut **`false`** ; LISI compact = flag + sous-config en mémoire ou YAML) |
 
-**Hors périmètre Phase C v1** : F3, F4, F5, diagnostic causal étendu, RAG, modification renderer (réutilisation block_types existants si possible).
+**Hors périmètre v1** : F3–F5, RAG, LLM corps du rapport, modification S3, agrégation OF, narratif long, renderer enterprise séparé.
 
 ---
 
 ## 1.1 Libellés métier, titre et question
 
-Les libellés affichés dans le rapport F2 compact proviennent **uniquement** de :
+| Source autorisée | Usage |
+|------------------|--------|
+| YAML client | `libelle_court` / tolérances LTI/LTS, `entites.facteurs_analyse` |
+| Intent | Question technique conservée pour S1 ; **pas** comme seul titre client |
 
-| Source autorisée | Exemples YAML / intent |
-|------------------|------------------------|
-| YAML client | `pieces.*.operations.*.tags.*` (libellé tag, nominal, LTI/LTS, unité) |
-| Labels / tags métier configurés | `colonnes_libelles`, alias documentaires explicites |
-| Libellés de colonnes / facteurs | `entites.facteurs_analyse.*.description`, `friendly_group_label` |
-| Intent utilisateur | `question_originale` ou formulation S1 **reprise telle quelle** si déjà claire |
-
-**Formule cible (synthèse / titre)** :
+**Titre métier (cover + synthèse)** — `compact_report_title()` :
 
 ```text
-Synthèse métier — Comparaison de {label_variable_yaml} selon {label_facteur_yaml}
+Comparaison du {label_variable_yaml} selon la {label_facteur_yaml}
 ```
 
-`{label_variable_yaml}` = libellé configuré du tag ; à défaut, le tag technique (`CR50_INTRADOS_VRILLAGE`).  
-`{label_facteur_yaml}` = libellé du facteur (`matrice`, `machine`, etc.) — jamais une paraphrase inventée.
+Exemple LISI validé : *Comparaison du Vrillage intrados CR50 selon la matrice*.
 
-**Exemple valide** (libellés YAML ou facteur « matrice » documenté) :
+**Cover F2 compact** :
 
-> Synthèse métier — Comparaison du vrillage selon la matrice
+- Titre métier en gras ;
+- Ligne grise : `Référence technique : {question_originale}` (tag S1, non réécrit).
 
-**Exemple interdit** :
-
-> Comparer le vrillage à 50 % de corde (CR50_INTRADOS_VRILLAGE)…
-
-…si « 50 % de corde » n’apparaît **nulle part** dans le YAML client (tag, groupe de variables, alias).
-
-**Interdit** :
-
-- Inventer une paraphrase métier absente de la config.
-- Transformer automatiquement un tag (`CR50_INTRADOS_VRILLAGE`) en formulation physique (« 50 % de corde », « intrados », etc.) sans entrée YAML explicite.
-- Laisser S1/S5 **inventer** ou **enrichir** un titre métier non présent dans le YAML pour le corps du PDF F2 compact (S7 Phase C v1 = templates Python sans reformulation LLM).
-- Utiliser le libellé vrillage de référence (`Vrillage_Libre_S50`) si ce n’est pas un alias YAML du client.
-
-**Cover — question affichée** : reprendre `intent.question` / question originale **sans réécriture** ; si absent, une ligne générée uniquement à partir des libellés YAML ci-dessus (pas de texte S5).
+**Interdit** : paraphrase physique absente du YAML ; titre = question brute seule.
 
 ---
 
-## 2. Structure exacte du rapport compact
+## 2. Structure du rapport compact (blocs JSON)
 
-Ordre fixe des sections (11 blocs logiques ; regroupement renderer autorisé pour densité) :
+Ordre fixe — `F2_COMPACT_BLOCK_ORDER` dans `f2_compact_blocks.py` :
 
-| # | Section | Rôle | Source principale |
-|---|---------|------|-------------------|
-| 1 | **Cover** | Identité, question, date, profil | intent, ClientContext |
-| 2 | **Synthèse métier** | Titre + 2 lignes : variable, nominal, tolérance, facteur | YAML tolérances + `group_descriptive` |
-| 3 | **Conclusion clé** | 2–4 phrases : pire groupe, chiffre critique, contraste favorable **si fiable** | Lignes filtrées S3 uniquement |
-| 4 | **Contexte de l’analyse** | Définition mesure, hors tolérance, **niveau d’analyse** (mesure / OF / lot…) | YAML + `group_descriptive.level` + `aggregation` |
-| 5 | **Indicateurs clés** | Tableau 4 colonnes max : critique / % HT / Cpk min / favorable | Lignes filtrées |
-| 6 | **Tableau groupes fiables** | Table principale (voir §4) | `group_descriptive.rows[]` filtré |
-| 7 | **Lecture Cp/Cpk simple** | Encadré pédagogique court + phrase « dans ce cas » | Template Python + Cpk du pire groupe filtré |
-| 8 | **Fiabilité statistique** | IC95 moyenne et % HT par groupe **présent dans le tableau** | `ci95_*` par row S3 |
-| 9 | **Graphique** | Boxplot + légende une ligne | S4 |
-| 10 | **Test statistique** | Kruskal/ANOVA + p-value ; Dunn en annexe courte si sig. | `specialist_results` |
-| 11 | **Lecture métier** | **3 blocs max** : priorité / intermédiaires (synthèse) / favorable ou « à confirmer » | Templates sur rows filtrées |
-| 12 | **Verdict métier** | **3 paragraphes** ; hiérarchie **≤ 5** groupes filtrés ; pas de liste 17 puces | Rows filtrées |
-| 13 | **Groupes non exploités** | Liste des groupes exclus + motif (voir §4.3) — **hors** conclusion et verdict | `group_descriptive.rows[]` exclues |
-| 14 | **Limite d’interprétation** | Texte fixe association ≠ causalité | `group_descriptive.interpretation_limits` |
-| 15 | **Traçabilité** | SHA-256, version, contrôle chiffres ; peut dupliquer la liste §13 en annexe | A3 |
+| # | `block_type` | Rôle |
+|---|--------------|------|
+| 1 | `cover` | Identité, titre métier, référence technique |
+| 2 | `business_synthesis` | Titre + cadrage niveau mesure + variable / tolérances |
+| 3 | `conclusion_key` | 3 paragraphes (pire / favorable ou à confirmer / prudence) |
+| 4 | `verdict` | Bandeau + puces (prioritaire, verdict, point d’attention) |
+| 5 | `business_context` | Contexte + définition hors tolérance **LTI/LTS** |
+| 6 | `key_indicators` | Tableau indicateurs (prioritaire, % HT, Cpk min, favorable) |
+| 7 | `group_comparison_table` | Tableau principal (≤ `max_table_rows`) |
+| 8 | `how_to_read_cpk` | Pédagogie Cpk (seuils YAML) |
+| 9 | `statistical_reliability` | **Tableau** IC95 (pas liste verticale) |
+| 10 | `charts` | Boxplot filtré |
+| 11 | `statistical_test` | Kruskal / ANOVA |
+| 12 | `business_reading` | ≤ 3 sections (prioritaire / intermédiaires / favorable ou à confirmer) |
+| 13 | `final_verdict` | Hiérarchie ≤ 5 + paragraphes |
+| 14 | `excluded_groups` | Groupes non exploités + motifs **métier** |
+| 15 | `interpretation_limits` | Association ≠ causalité |
+| — | `traceability` | (optionnel quality gate) |
 
-**Page cible** : 4–6 pages A4 avec tableau top-N (4–6 groupes), pas d’annexe Dunn longue en v1 client.
-
-**Bandeau GO/NO-GO** (cover) : calculé **uniquement** depuis les indicateurs du **pire groupe filtré** (§6), pas depuis le Cpk global pooled ni la seule priorité S6.
-
----
-
-## 3. Règles de sélection — groupes fiables
-
-Un groupe entre dans l’ensemble **fiable** (`rows_reliable`) si **toutes** les conditions suivantes sont vraies :
-
-1. **Effectif** : `n` ≥ seuil minimal du niveau d’analyse (YAML, voir §10).
-2. **Warnings S3** : aucun warning d’effectif faible sur la row (`effectif_faible_*`, `n<… pour Cp/Cpk fiable` n’exclut pas du tableau si Cp/Cpk affichés N/A — voir §4).
-3. **Validité métier** : `group_value` passe le filtre format / allowlist YAML pour la colonne `group_by` (§5).
-4. **Classement** : conserver l’ordre S3 (`rank`) **parmi les fiables** ; ne pas recalculer le ranking en S7.
-
-Si **aucun** groupe fiable : rapport **dégénéré** — message « Données insuffisantes pour comparer les groupes de façon fiable », tableau vide, verdict **SURVEILLANCE** ou **GO** avec limite explicite (pas de NO-GO sur des chiffres non fiables).
-
-**Groupe prioritaire (pire)** : première row **fiable** par `rank`. Les champs S3 `worst_group` / `best_group` ne sont utilisés que s’ils désignent un groupe **fiable** ; sinon recalcul sur `rows_reliable` uniquement.
-
-**Groupe favorable** : dernière row fiable par `rank` **seulement si** `n` ≥ seuil favorable (YAML, ≥ seuil minimal) ; sinon section « référence à confirmer » **absente** du verdict principal.
+**Page cible** : 4–6 pages A4.
 
 ---
 
-## 4. Règles d’exclusion — effectif faible et valeurs parasites
+## 3. Sélection — groupes fiables (C1)
 
-### 4.1 Exclusion effectif
+Module : `f2_compact_selection.build_f2_compact_selection()`.
 
-| Niveau S3 | Seuil YAML (clé proposée) | Défaut si absent |
-|-----------|---------------------------|------------------|
-| `measure` | `dataset.agregation_metier_f2.defaults.min_observations_per_unit` réutilisé comme `rapport_pdf.f2_compact.min_n_measure` | `group_descriptive` utilise déjà `MIN_N_GROUP=6` en warning — **aligner affichage sur warning S3** |
-| `aggregated_unit` | `min_units_per_group` dans `aggregation` / YAML unité | Valeur du bloc `aggregation` S3 |
+Un groupe entre dans **`rows_reliable`** si :
 
-**Règle** : S7 **ne hardcode pas** `n < 6` ; il lit seuils depuis `group_descriptive.aggregation` ou `rapport_pdf.f2_compact.*` ou `dataset.agregation_metier_f2.defaults`.
+1. `n` ≥ seuil (`rapport_pdf.f2_compact.min_n_measure` ou défaut aligné S3) ;
+2. Pas de valeur manquante bloquante ;
+3. `group_value` conforme au **pattern** YAML (`group_value_pattern`) ;
+4. Absent de la **denylist** (`group_value_denylist`) ;
+5. Classement S3 (`rank`) conservé parmi les fiables.
 
-Rows exclues → section **« Groupes non exploités »** (§4.3) et/ou annexe traçabilité — **jamais** dans le tableau principal, la conclusion clé ou le verdict.
+**Pire groupe fiable** : `worst_reliable` (rang minimal parmi fiables).
 
-### 4.2 Exclusion valeurs parasites
+**Référence favorable** (D2) — `_select_favorable_reference()` :
 
-Valeurs typiques à exclure (LISI `Ref_Matrice`) : noms opérateurs, codes hors pattern matrice.
+| `favorable_strength` | Critère (résumé) | Affichage |
+|----------------------|------------------|-----------|
+| `robust` | Cpk si requis ; IC95 % HT étroit si `max_ci95_ht_width_pct` YAML explicite | « Référence favorable la plus robuste » |
+| `limited` | Meilleur profil mais IC95 large ou seuil largeur non configuré | « Référence favorable à confirmer » |
+| `none` | Pas de contraste fiable | Message d’absence |
 
-| Source | Mécanisme |
-|--------|-----------|
-| YAML | `entites.facteurs_analyse.<op>.<facteur>.group_value_pattern` (regex, ex. `^O\\d{7}`) |
-| YAML | `group_value_denylist` optionnel (liste) |
-| S3 | Si absent, warning S3 `invalid_group_value` (Phase ultérieure) — **Phase C v1** : filtre YAML côté S7 assembleur uniquement |
-
-**Interdit dans tableau principal, conclusion clé, indicateurs clés et verdict** : `PAIROYS ALAIN`, `LANDIER THOMAS`, `M664520` (n=1), tout groupe non conforme au pattern.
-
-### 4.3 Groupes non exploités
-
-Section dédiée, **séparée** du tableau principal (§5) et du verdict métier (§9).
-
-**Emplacement autorisé** :
-
-- Bloc PDF « Groupes non exploités » (recommandé, après verdict ou avant limites) ;
-- Annexe de traçabilité (liste complète acceptable si le bloc principal est tronqué).
-
-**Contenu obligatoire par groupe exclu** :
-
-| Colonne | Description |
-|---------|-------------|
-| `group_value` | Valeur brute du facteur |
-| `n` | Effectif S3 |
-| Motif d’exclusion | Une valeur parmi : `effectif_insuffisant`, `valeur_manquante`, `pattern_yaml_non_respecte`, `groupe_parasite`, `warning_s3_autre` (+ détail texte du warning S3 si présent) |
-
-**Compteur** : « N groupes non exploités sur M groupes détectés » — sans nommer ces groupes ailleurs.
-
-**Interdit** :
-
-- Mentionner **nommativement** un groupe exclu dans la **conclusion clé** (§6).
-- Utiliser un groupe exclu dans `worst_group`, `best_group`, indicateurs clés ou référence favorable.
-- Utiliser un groupe exclu dans le **verdict métier** (§9) ou la **lecture métier** prioritaire (§11).
-- Mélanger des groupes exclus dans le **tableau principal** ou la **fiabilité statistique** (§8).
-- Footnote sous le tableau principal seule à la place de la section (le compteur footnote est optionnel en **plus** de §4.3, pas en remplacement).
+**Dégénéré** : aucun fiable → message explicite, verdict prudent (pas de NO-GO sur données non fiables).
 
 ---
 
-## 5. Format du tableau principal
+## 4. Exclusion — groupes non exploités (C1, D4)
 
-**Titre** : « Comparaison des groupes » ou libellé métier du facteur (`friendly_group_label`).
+**Section** `excluded_groups` — jamais dans tableau principal, conclusion, verdict prioritaire, boxplot.
 
-**Colonnes** (ordre fixe) :
+| Motif (`exclusion_reason`) | Libellé client | Détail client (PDF) |
+|--------------------------|----------------|---------------------|
+| `effectif_insuffisant` | Effectif insuffisant | `n=X < min_n=Y` |
+| `pattern_yaml_non_respecte` | Hors format matrice | *Valeur non conforme au format attendu des matrices* (pas de regex brut) |
+| `groupe_parasite` | Groupe exclu… | Formulation métier (denylist) |
+| `valeur_manquante` | … | … |
 
-| Colonne | Champ S3 | Notes |
-|---------|----------|-------|
-| Groupe | `group_value` | Libellé métier |
-| n | `n` | Unité = niveau d’analyse (mesures ou OF/lots) |
-| Moyenne | `mean` | Unité mm ou YAML |
-| Écart-type | `std` | |
-| % hors tol. | `out_of_tolerance_rate` | Format % client |
-| Cp | `cp` | `—` si null + footnote warning |
-| Cpk | `cpk` | `—` si null |
-| Rang | `rank` | Sur ensemble fiable ré-étiqueté 1..k ou rang S3 d’origine |
-| Niveau | `severity_display` | Critique / Surveillance / Favorable — **recalculé sur fiables only** |
-
-**Lignes** : max `rapport_pdf.f2_compact.max_table_rows` (défaut **6**, comme vrillage top matrices).
-
-**Légende sous tableau** (2 lignes max) :
-
-- Code couleur : critique / intermédiaire / favorable (seuils couleur depuis `rapport_pdf.cpk_couleurs`).
-- Rappel : « Cp/Cpk calculés au niveau {label niveau} ».
-
-**Interdit** : 18 lignes dont 10 à n≤3 ; colonnes Cp/Cpk vides sans explication.
+Le **pattern regex** reste en trace interne (`selection_meta` / `detail` assembleur), pas dans le PDF client.
 
 ---
 
-## 6. Synthèse métier attendue
+## 5. Tableau principal
 
-**Bloc 2 — Synthèse métier** (en-tête, style vrillage p.1) :
+Colonnes : Groupe, n, Moyenne, Écart-type, % hors tol., Cp, Cpk, Rang, **Niveau**.
 
-```text
-Synthèse métier — Influence de {facteur} sur {variable_libelle}
-Variable analysée : {tag}   Nominal : {nominal}   Tolérance : [{lti} ; {lts}] {unité}
-```
+**Niveau** — `compact_level_display()` (D4) :
 
-**Bloc 3 — Conclusion clé** (2–4 phrases, ≤ 120 mots) — **groupes fiables uniquement** :
+- `Critique` **uniquement** si verdict **NO-GO** (seuils P1 YAML franchis) ;
+- sinon S3 `critique` → **Prioritaire** ; `surveillance` → **Surveillance renforcée**.
 
-1. **Constat** : groupe le plus critique + % HT **ou** moyenne proche limite + Cpk si disponible.
-2. **Contraste** : meilleur groupe fiable **uniquement si** seuil favorable atteint ; sinon phrase « aucun groupe de référence fiable identifié ».
-3. **Prudence** : une phrase si niveau `measure` vs référence OF agrégée.
+**Indicateurs clés** (D4/D4b) :
 
-Aucun nom de groupe **non exploité** (§4.3) dans ce bloc.
+- Pire : **Matrice prioritaire** / **Groupe prioritaire** ;
+- Favorable : libellé selon `favorable_strength` (`favorable_indicator_label()`), pas « Groupe le plus favorable » si `limited`.
 
-**Interdit** (leçons F2c raté) :
-
-- NO-GO bandeau alors que pire groupe filtré montre 0,4 % HT et Cpk > 1,3.
-- Cpk « favorable » sur le groupe prioritaire.
-- Comparer pire groupe à M664520 n=1.
-- Phrase du type « Groupe à surveiller … rang N » en boucle.
+Formats : virgule française ; % et IC95 harmonisés avec §8.
 
 ---
 
-## 7. Lecture Cp/Cpk simple
+## 6. Synthèse et conclusion
 
-**Contenu fixe** (template, adapté vrillage §4 ref.) :
+**Conclusion clé** : métriques formatées (`_fmt_pct`, `_fmt_num`, `ci95_display`) — pas de `0.4 %` ni IC95 bruts S3 dans les paragraphes (D4b).
 
-1. Définition Cp (dispersion) et Cpk (dispersion + centrage) — **≤ 80 mots**.
-2. Grille seuils : lire `rapport_pdf.cpk_couleurs` ou `recommandations.seuils_cpk` — **pas de seuils en dur dans le template**.
-3. Phrase contextualisée : « Dans cette analyse, {pire_groupe} affiche un Cpk de {cpk} ; {interprétation_seuil}. »
+**Verdict** — `compute_compact_verdict()` (D1) :
 
-**Interdit** : paragraphe « Comment lire le Cpk » de ½ page + redite des seuils déjà dans l’indicateur clé.
+- NO-GO seulement si % HT ou Cpk pire groupe franchit seuils **YAML** P1 ;
+- sinon **SURVEILLANCE** + ton `point_attention` ;
+- **indépendant** du `severity_label` S3.
+
+Bandeau : libellés `rapport_pdf.verdict_bandeaux` (tiret long supporté PDF — `formatters._PRINTABLE_RE`).
 
 ---
 
-## 8. Fiabilité statistique
+## 7. Lecture Cp/Cpk
 
-**Tableau** : uniquement groupes du tableau principal (fiables).
+Bloc `how_to_read_cpk` — seuils depuis YAML (`f2_pedagogy`).  
+**Limite v1** : le texte pédagogique peut encore dire « situation critique » pour Cpk &lt; 1,0 (seuil process, pas niveau groupe).
 
-| Colonne | Source |
+---
+
+## 8. Fiabilité statistique (D3, D4, D4b)
+
+**Tableau** avec colonnes : Groupe, n, Moyenne, IC95 moyenne, % hors tolérance, IC95 % hors tolérance, Cpk, Statut fiabilité.
+
+**Format IC95** — `ci95_display()` (`f2_compact_display.py`) :
+
+- Moyenne : 3 décimales, virgule — ex. `[0,063 ; 0,072]` ;
+- % HT : 2 décimales, pas de `-0,0 %` — ex. `[0,15 % ; 1,30 %]`, `[0,00 % ; 0,69 %]` ;
+- source S3 `low`/`high` ; S7 ne recalcule pas.
+
+Même formatage réutilisé dans **paragraphes** (conclusion, lecture métier) via `_row_metrics_phrase()` (D4b).
+
+**Casse codes** : matrices `O52…` préservées en PDF (`clean_cell` / pas de `.lower()` sur référents).
+
+---
+
+## 9. Graphique boxplot (D3)
+
+- `build_compact_chart_items()` régénère le boxplot depuis `df_propre` si disponible ;
+- `intent["chart_include_group_values"]` = liste des `group_value` fiables ;
+- S4 : filtre uniquement si clé présente et non vide (`chart_builder.py`).
+
+Groupes exclus **absents** du graphique.
+
+---
+
+## 10. Verdict métier (bloc final)
+
+`final_verdict` : hiérarchie ≤ 5 avec `severity_display` compact ; paragraphes sans causalité abusive.
+
+---
+
+## 11. Provenance
+
+| Couche | Rôle |
+|--------|------|
+| S3 | `group_descriptive`, IC95, ranks, warnings |
+| YAML | Seuils, patterns, libellés, verdict |
+| S7 | Assemblage, formatage, filtrage présentation **uniquement** |
+| S4 | PNG boxplot |
+| S5/S6/LLM | **Non utilisés** pour le corps F2 compact v1 |
+
+---
+
+## 12. Interdictions (toujours actives)
+
+1. Narratif long (`f2_narratif_enabled` reste `false`).
+2. Causalité abusive (quality gate).
+3. Chiffre / libellé inventé.
+4. Groupe exclu dans tableau, graphique, conclusion prioritaire.
+5. « Critique » affiché sans NO-GO P1 (D4).
+6. Regex brut côté client (D4).
+7. Recalcul statistique IC95 / ranking en S7.
+
+---
+
+## 13. Anti-patterns F2c — statut
+
+| Observation F2c | v1 candidate |
+|-----------------|--------------|
+| 14 pages, 18 lignes | ≤ 6 lignes tableau, ~5 pages LISI |
+| NO-GO + 0,4 % HT | SURVEILLANCE si P1 non franchi |
+| Parasites en tableau | Section non exploités |
+| IC95 absents / illisibles | Tableau + formats FR |
+| Titre = question technique | Titre métier + ref. technique |
+
+---
+
+## 14. Critères d’acceptation Phase C — bilan
+
+| # | Critère | v1 |
+|---|---------|-----|
+| 1 | LISI RD4 vrillage × matrice ≤ 6 p., parasites hors tableau | OK (`lisi_rd4_cr50_vrillage_f2_compact_d4.pdf`) |
+| 2 | Verdict cohérent pire groupe filtré | OK |
+| 3 | Provenance S3/YAML | OK (gate + tests) |
+| 4 | Causalité | OK |
+| 5 | `f2_narratif_enabled: false`, flag compact dédié | OK |
+| 6 | Tests S7 compact + pipeline | **116 passed** |
+
+---
+
+## 15. Commits de référence (C1 → D4b)
+
+| Phase | Commit | Contenu |
+|-------|--------|---------|
+| C1 | `1499e4c` | Sélection groupes fiables / exclus |
+| C2 | `704e144` | Blocs JSON `build_f2_compact_document` |
+| C3 | `c423eec` | Branchement assembler + renderer PDF |
+| D1 | `9be7dc3` | Verdict prudent, cadrage mesure, libellés |
+| D2 | `c84bdd5` | Référence favorable robuste / limited |
+| D3 | `974c0e5` | Tableau IC95, boxplot filtré |
+| D4 + D4b | `0d7f43d` | Polish libellés, formats, cover, `f2_compact_display.py` |
+
+---
+
+## 16. F2 compact v1 candidate (gel documentaire)
+
+| Élément | Valeur |
 |---------|--------|
-| Groupe | `group_value` |
-| n | `n` |
-| IC 95 % moyenne | `ci95_mean.label` |
-| IC 95 % hors tol. | `ci95_out_of_tolerance_rate.label` |
+| **Commit HEAD (référence)** | `0d7f43d` — `fix(s7): polish F2 compact labels and formatting` |
+| **Branche de travail** | `feat/p6-analysis-families` |
+| **Dernier PDF local LISI** | `reports/lisi_rd4_cr50_vrillage_f2_compact_d4.pdf` |
+| **Question technique** | `Comparer CR50_INTRADOS_VRILLAGE selon la matrice sur RD4L1A1C EQUATOR` |
+| **Tests S7** | **116 passed** (dernier run doc) |
+| **Narratif long** | **Désactivé** (`f2_narratif_enabled: false`) |
+| **Activation compact** | Flag explicite `f2_compact_enabled: true` + `rapport_pdf.f2_compact` (pattern, `min_n_measure`, etc.) |
+| **Code F2 compact** | **Figé** — pas de évolution sans nouveau chantier |
 
-**Paragraphe de synthèse** (2–3 phrases) :
+### Limites acceptées v1
 
-- Confirme ou nuance le classement du pire groupe.
-- Mentionne prudence si favorable a un n plus faible que les autres (sans le promouvoir en verdict).
+- **Niveau mesure capteur** uniquement — pas d’équivalence revendiquée avec rapport vrillage OF agrégé.
+- **Pas de colonne OF** dans `data/lisi_capteurs.csv` — pas d’agrégation OF en v1.
+- **YAML LISI** : flag compact et `libelle_court` pas forcément persistés en prod (runs via config mémoire).
+- **Mise en page** : codes matrices parfois **coupés** sur plusieurs lignes dans tableaux PDF étroits.
+- **Pédagogie Cpk** : formulation « situation critique » possible (seuil Cpk, distinct du niveau groupe).
+- **S4 test** : voir §17 (hors périmètre F2, non bloquant compact).
 
-**Source** : champs `ci95_*` déjà calculés en S3 — S7 ne recalcule pas.
+### Améliorations possibles (hors urgence)
 
----
-
-## 9. Verdict métier
-
-**Structure** :
-
-- Titre : « Verdict métier »
-- **3 paragraphes** (priorité / surveillance / référence ou absence de référence fiable)
-- Hiérarchie optionnelle : **≤ 5** lignes `rank. groupe (niveau)` — groupes fiables uniquement
-
-**Règles verdict** :
-
-| Condition (pire groupe filtré) | Bandeau |
-|--------------------------------|---------|
-| `out_of_tolerance_rate` > seuil P1 YAML **ou** Cpk < `recommandations.seuils_cpk.p1_sous` | NO-GO |
-| Surveillance (seuils intermédiaires YAML) | SURVEILLANCE |
-| Sinon | GO |
-
-Seuils : **YAML** `recommandations.seuils_cpk`, `rapport_pdf.verdict_*` — jamais `1.33` hardcodé en S7.
-
-**Interdit** :
-
-- Groupe faible ou parasite dans le verdict.
-- n=1 comme « référence favorable ».
-- Liste de 17 puces.
-- Verdict basé sur `cp_cpk` global pooled ou priorité S6 seule.
+- Persister config compact + `libelle_court` dans `configs/lisi_aerospace/client_config.yaml`.
+- Smoke PDF LISI en CI non-régression.
+- Césure / largeurs colonnes pour codes `O52…`.
+- Pédagogie Cpk allégée en mode `f2_compact`.
+- Agrégation OF si données + règle métier disponibles (chantier séparé).
 
 ---
 
-## 10. Limite d’interprétation
+## 17. Note technique — test S4 préexistant
 
-**Texte principal** : reprendre `group_descriptive.interpretation_limits` (S3).
+**Test** : `systems/s4/tests/test_s4.py::TestS4PipelineLisi::test_tendance_timeseries`
 
-**Complément fixe** (template) :
+**Échec actuel** :
 
-- Niveau d’analyse (mesure vs unité agrégée).
-- « Cette analyse met en évidence une association entre {facteur} et {variable} ; elle ne permet pas à elle seule d’affirmer une causalité directe certaine. » (PHILOSOPHY §28)
+```text
+build_timeseries_chart() got an unexpected keyword argument 'specialist_results'
+```
 
-**Quality gate** : réutiliser `_apply_f2_narratif_gate` / `text_contains_abusive_causality` sur les blocs texte F2 compact.
+**Cause** : `build_charts()` passe `specialist_results=` à tous les builders ; `build_histogram` / `build_boxplot_chart` acceptent ce paramètre optionnel depuis D3, **`build_timeseries_chart` non** (signature 4 args seulement).
 
----
+**Périmètre** : intention **tendance** / timeseries — **sans lien** avec F2 compact (boxplot comparatif).
 
-## 11. Provenance des données
+**Recommandation avant merge PR** :
 
-### 11.1 S3 / P6 (obligatoire)
+| Option | Effort | Verdict |
+|--------|--------|---------|
+| **A — Correction courte** | Ajouter `specialist_results: list[dict] \| None = None` à `build_timeseries_chart` (symétrie builders) | **Recommandé** — 1 ligne, PR dédiée ou commit chore S4 |
+| B — Issue / note CI | Documenter test flaky / connu | Acceptable si merge urgent sans toucher S4 |
+| C — Exclusion temporaire | `@pytest.mark.skip` avec lien issue | **Déconseillé** — masque une régression réelle du pipeline tendance |
 
-| Donnée | Origine |
-|--------|---------|
-| Rows groupes, ranks, severity | `group_descriptive.rows[]` |
-| % HT, moyennes, Cp/Cpk | idem |
-| IC95 | `ci95_mean`, `ci95_out_of_tolerance_rate` |
-| Niveau, aggregation | `level`, `aggregation`, `warnings` |
-| Limites | `interpretation_limits` |
-| Test global | `anova_kruskal` / `dunn_posthoc` dans `specialist_results` |
-| p-value affichée | `format_p_value` certifié |
-
-### 11.2 YAML / ClientContext
-
-| Donnée | Origine |
-|--------|---------|
-| Tolérances LTI/LTS, nominal, unité | `pieces.*.operations.*.tags.*` |
-| Libellés facteur | `entites.facteurs_analyse`, `colonnes_libelles` |
-| Seuils Cpk / verdict | `recommandations.seuils_cpk`, `rapport_pdf.cpk_couleurs`, `verdict_bandeaux` |
-| Seuils effectif F2 | `dataset.agregation_metier_f2`, `rapport_pdf.f2_compact.*` |
-| Filtre group_value | `entites.facteurs_analyse.*.group_value_pattern` (à ajouter Phase C) |
-| Plafonds | `max_table_rows`, `max_graphiques_*` |
-
-### 11.3 S5 / S6 (optionnel, limité)
-
-- **S7 Phase C v1** : **aucune** dépendance LLM pour le corps F2 compact.
-- S6 plan d’action : **omis** ou 1 action P1 max si NO-GO certifié — pas de plan générique 4 lignes.
+**Impact PR F2 compact** : la branche peut être **prête à PR** côté S7 ; le merge global reste **conditionnel** si la CI exécute toute la suite S4 (14 tests, 1 échec).
 
 ---
 
-## 12. Interdictions explicites
+## 18. Validation documentaire (2026-06-03)
 
-1. Narratif long P7-F2a–c (`business_reading` × N, `how_to_read_cpk` long, 15 blocs).
-2. Boucle « un paragraphe par groupe intermédiaire ».
-3. Causalité abusive (PHILOSOPHY §28).
-4. Chiffre absent de S3 / YAML.
-5. Règle métier hardcodée (seuils n, regex LISI en Python).
-6. Groupe n=1 ou parasite en tête de tableau ou verdict.
-7. Double source de vérité verdict (S6 P1 vs group_descriptive).
-8. Paraphrase métier ou titre non présent dans le YAML (§1.1).
-9. Groupe exclu cité dans conclusion clé, verdict ou tableau principal (§4.3).
-10. Renderer custom Phase C v1 — assembler produit des blocs ; renderer existant étendu minimalement **après** validation spec + JSON blocs.
-11. Réactivation `narratif_metier` par défaut.
-
----
-
-## 13. Anti-patterns — PDF F2c raté (à ne plus reproduire)
-
-| Observation F2c | Cause | Spec compact |
-|-----------------|-------|--------------|
-| 14 pages | Trop de blocs + 18 lignes tableau | Max 6 lignes, 11 sections denses |
-| NO-GO + 0,4 % HT | Verdict S6 / Cpk global | Verdict = pire groupe **filtré** |
-| Cpk 1,47 « favorable » sur critique | Template incohérent | Cpk lu avec seuils YAML + cohérence rang |
-| M664520 n=1 favorable | Pas de filtre | Exclusion + pas de référence favorable |
-| PAIROYS ALAIN en groupe | Pas de pattern Ref_Matrice | Filtre YAML |
-| 16× « Groupe à surveiller » | Boucle template | 3 blocs lecture max |
-| % mesure vs % OF ref. | Niveau measure sans mention | Contexte explicite + agrégation YAML quand dispo |
-
----
-
-## 14. Critères d’acceptation Phase C
-
-1. Run LISI RD4 vrillage × matrice : PDF **≤ 6 pages**, tableau **≤ 6 groupes fiables**, 0 parasite visible.
-2. Verdict cohérent avec pire groupe filtré (bandeau + conclusion clé).
-3. Aucun chiffre du PDF absent de S3/YAML (test provenance).
-4. Quality gate causalité vert.
-5. `f2_narratif_enabled` reste `false` ; F2 compact activé par flag dédié.
-6. Tests S7 : assembler F2 compact + non-régression audit simple.
-
----
-
-## 15. Validation requise
-
-- [ ] Ahmed valide structure §2 et règles filtrage §3–5  
-- [ ] Ahmed valide §1.1 (libellés YAML) et §4.3 (groupes non exploités)  
-- [ ] Pattern `Ref_Matrice` LISI défini en YAML  
-- [ ] Seuils verdict F2 alignés vrillage (% HT OF vs mesure) documentés par client  
-- [ ] Go Phase C implémentation (S7 assembler only, pas S3/renderer v1)
+- [x] Spec alignée implémentation C1 → D4b  
+- [x] Section v1 candidate §16  
+- [x] Limites et commits référencés  
+- [ ] Persistance YAML LISI compact (chantier config, post-v1)  
+- [ ] Correction S4 `test_tendance_timeseries` (§17 option A)
