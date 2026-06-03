@@ -10,7 +10,9 @@ from typing import Any
 import pandas as pd
 
 _MAX_PDF_TEXT = 2000
-_PRINTABLE_RE = re.compile(r"[^\x20-\x7E\u00A0-\u024F\u1E00-\u1EFF]")
+_PRINTABLE_RE = re.compile(
+    r"[^\x20-\x7E\u00A0-\u024F\u1E00-\u1EFF\u2013\u2014]"
+)
 
 
 def format_bool(b: Any) -> str:

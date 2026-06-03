@@ -292,6 +292,10 @@ def sanitize_synthesis_text(
             out = pattern.sub("", out)
     out = strip_bad_p_value_phrases(out)
     out = polish_client_text(out)
+    for pat in _SYNTHESIS_PLACEHOLDER_PATTERNS:
+        if pat.search(out):
+            warnings.append("Placeholder lettre retiré de la synthèse")
+            out = pat.sub("", out)
     for pat in _SYNTHESE_PHRASE_PATTERNS:
         if pat.search(out):
             warnings.append(f"Formulation retirée de la synthèse : {pat.pattern}")
@@ -998,3 +1002,159 @@ def compute_fidelity_score(interpretations: list[dict]) -> float:
         else:
             scores.append(0.3)
     return round(sum(scores) / len(scores), 3)
+
+
+_SYNTHESIS_PLACEHOLDER_PATTERNS = [
+    re.compile(r"\bpi[eè]ce\s+[A-E]\b", re.I),
+    re.compile(r"\bop[eé]ration\s+[A-E]\b", re.I),
+    re.compile(r"\bvariables?\s+[A-E](?:\s*,\s*(?:et\s+)?[A-E])+\b", re.I),
+    re.compile(r"\bvariables?\s+[CDE]\b", re.I),
+]
+
+
+def _intent_variables_line(intent: dict) -> str:
+    variables = intent.get("variables") or []
+    if not variables:
+        return "non précisées"
+    return ", ".join(str(v) for v in variables[:12])
+
+
+def _result_for_column(specialist_results: list[dict], agent: str, column: str) -> dict:
+    target = canonical_agent(agent)
+    for row in specialist_results or []:
+        if row.get("status") != "success":
+            continue
+        if canonical_agent(row.get("agent")) != target:
+            continue
+        res = row.get("result") or {}
+        if str(res.get("colonne", "")) == column:
+            return res
+    return {}
+
+
+def portrait_chart_facts_block(
+    chart_type: str,
+    variable: str,
+    specialist_results: list[dict],
+    intent: dict,
+    context: "ClientContext",
+) -> str:
+    """Faits certifiés S3 pour prompt graphique portrait."""
+    desc = _result_for_column(specialist_results, "descriptive", variable)
+    norm = _result_for_column(specialist_results, "normality", variable)
+    fit = _result_for_column(specialist_results, "distribution_fit", variable)
+    piece = intent.get("piece") or "N/A"
+    operation = intent.get("operation") or "N/A"
+    lines = [
+        f"Pièce : {piece}",
+        f"Opération : {operation}",
+        f"Variable : {variable}",
+    ]
+    if desc:
+        lines.extend(
+            [
+                f"Effectif n = {desc.get('n')}",
+                f"Moyenne = {desc.get('moyenne')} mm",
+                f"Médiane = {desc.get('mediane')} mm",
+                f"Écart-type = {desc.get('ecart_type')} mm",
+                f"Asymétrie = {desc.get('skewness')}",
+                f"IQR = {desc.get('iqr')}",
+                f"% hors tolérances = {desc.get('pct_hors_lti_lts')} %",
+                f"% au-dessus LTS = {desc.get('pct_au_dessus_lts')} %",
+                f"% sous LTI = {desc.get('pct_sous_lti')} %",
+                f"Valeurs aberrantes (règle IQR) = {desc.get('nb_outliers')}",
+                f"LTI = {desc.get('lti')} / LTS = {desc.get('lts')} / nominal = {desc.get('nominal')}",
+            ]
+        )
+    if norm:
+        lines.append(f"Verdict normalité = {norm.get('verdict_normalite')}")
+    if fit:
+        loi = fit.get("loi_retenue")
+        lines.append(f"Loi retenue = {loi}")
+    ct = chart_type.lower()
+    if ct == "histogram" and desc:
+        lines.append(f"Min = {desc.get('min')} / Max = {desc.get('max')} mm")
+    if ct == "boxplot" and desc:
+        lti, lts, nom = desc.get("lti"), desc.get("lts"), desc.get("nominal")
+        if lti is not None and lts is not None and nom is not None:
+            centre = (float(lti) + float(lts)) / 2
+            lines.append(f"Centre de tolérance = {centre} mm (entre LTI et LTS)")
+    return "\n".join(lines)
+
+
+def portrait_chart_prompt(
+    chart_type: str,
+    variable: str,
+    facts: str,
+    intent: dict,
+) -> str:
+    return (
+        f"Rédige 2 à 3 phrases complètes en français pour un rapport qualité "
+        f"(graphique {chart_type}).\n"
+        f"Variable : {variable}\n"
+        f"Pièce réelle : {intent.get('piece')}\n"
+        "Utilise UNIQUEMENT les chiffres ci-dessous. N'invente rien. "
+        "Pas de placeholders (A, B, C…). "
+        "Chaque phrase doit se terminer par un point.\n\n"
+        f"Faits certifiés :\n{facts}\n\n"
+        "Interprétation :"
+    )
+
+
+def finalize_chart_interpretation(text: str) -> str:
+    """Évite les phrases coupées (troncature LLM) — repli si fin invalide."""
+    out = str(text or "").strip()
+    if not out:
+        return ""
+    if out.endswith(("...", "…")):
+        out = out.rstrip(".…").strip()
+    if out and out[-1] not in ".!?…":
+        last = out.rsplit(".", 1)[0]
+        if len(last) > 40:
+            out = last.strip() + "."
+        elif len(out) > 20:
+            out = out + "."
+    return out.strip()
+
+
+def strip_client_metric_jargon(text: str) -> str:
+    out = str(text or "")
+    out = re.sub(r"\bAIC\s*=\s*[-\d.,]+", "", out, flags=re.I)
+    out = re.sub(r"\bBIC\s*=\s*[-\d.,]+", "", out, flags=re.I)
+    return re.sub(r"\s{2,}", " ", out).strip()
+
+
+def portrait_chart_fallback(chart_type: str, variable: str, facts: str) -> str:
+    """Repli Python certifié si LLM indisponible ou tronqué."""
+    lines = [ln.strip() for ln in facts.splitlines() if ln.strip()]
+    ct = chart_type.lower()
+    if "histogram" in ct:
+        return (
+            f"Distribution de {variable} : "
+            + " ".join(lines[4:10])
+            + "."
+        )
+    if "boxplot" in ct:
+        med = next((ln for ln in lines if "édiane" in ln.lower() or "Médiane" in ln), "")
+        out = next((ln for ln in lines if "aberrant" in ln.lower()), "")
+        return (
+            f"Boxplot de {variable}. {med} {out}."
+        ).replace("  ", " ")
+    if "qqplot" in ct:
+        norm = next((ln for ln in lines if "normalité" in ln.lower()), "")
+        loi = next((ln for ln in lines if "Loi retenue" in ln), "")
+        return f"QQ-plot : {norm} {loi}.".replace("  ", " ")
+    return " ".join(lines[:8]) + "."
+
+
+def is_meaningful_chart_interpretation(text: str, facts: str) -> bool:
+    if not text or len(text.strip()) < 20:
+        return False
+    low = text.lower()
+    if re.search(r"\bpi[eè]ce\s+[a-e]\b", low):
+        return False
+    if "variables c" in low or "opération b" in low:
+        return False
+    nums_facts = set(re.findall(r"\d+(?:[.,]\d+)?", facts))
+    nums_text = set(re.findall(r"\d+(?:[.,]\d+)?", text))
+    return bool(nums_facts & nums_text) or "%" in text

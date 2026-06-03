@@ -153,6 +153,7 @@ class DistributionFitSpecialist(BaseSpecialist):
             "n": n,
             "loi_retenue": loi_retenue,
             "loi_candidate_aic": loi_retenue,
+            "parametres": dict(best.get("parametres") or {}),
             "aic_min": round(aic_min, 3),
             "bic_min": round(bic_min, 3),
             "ranking": ranking,

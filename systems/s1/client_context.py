@@ -190,6 +190,143 @@ class ClientContext:
             return [t for t in all_tags if re.search(regex, t)]
         return [t for t in all_tags if fnmatch.fnmatch(t, pattern)]
 
+    def get_agregation_metier_f2_raw(self) -> dict:
+        """Section dataset.agregation_metier_f2 — agrégation F2 (P6 Phase 2b)."""
+        dataset = self.raw.get("dataset", {})
+        if not isinstance(dataset, dict):
+            return {}
+        raw = dataset.get("agregation_metier_f2", {})
+        return raw if isinstance(raw, dict) else {}
+
+    def resolve_agregation_metier_f2(self, intent: dict | None = None) -> dict:
+        """
+        Résout la configuration d'agrégation métier F2 pour S3.
+
+        Retourne un dict normalisé avec clés active, unit_id, unit_column, warnings, etc.
+        Si active=False, le pipeline doit rester au niveau mesure (fallback).
+        """
+        intent = intent or {}
+        raw = self.get_agregation_metier_f2_raw()
+        warnings: list[dict[str, Any]] = []
+
+        enabled_global = bool(raw.get("enabled", False))
+        preferred_output = str(raw.get("preferred_output", "measure")).strip() or "measure"
+        if preferred_output not in ("measure", "both", "aggregated_unit"):
+            preferred_output = "measure"
+        fallback_to_measure = bool(raw.get("fallback_to_measure", True))
+        defaults = dict(raw.get("defaults") or {})
+        unites_raw = raw.get("unites") or {}
+        if not isinstance(unites_raw, dict):
+            unites_raw = {}
+
+        base = {
+            "active": False,
+            "reason": "disabled",
+            "preferred_output": preferred_output,
+            "fallback_to_measure": fallback_to_measure,
+            "warnings": warnings,
+            "unit_id": None,
+            "unit_column": None,
+            "label": None,
+            "min_observations_per_unit": int(defaults.get("min_observations_per_unit", 6)),
+            "value_aggregation": str(defaults.get("value_aggregation", "mean")),
+            "tolerance_level": "aggregated_unit",
+            "min_units_per_group": int(defaults.get("min_units_per_group", 3)),
+            "min_units_for_cpk": int(defaults.get("min_units_for_cpk", 30)),
+        }
+
+        if not enabled_global:
+            return base
+
+        enabled_units: list[str] = []
+        for uid, cfg in unites_raw.items():
+            if isinstance(cfg, dict) and cfg.get("enabled"):
+                enabled_units.append(str(uid))
+
+        if not enabled_units:
+            base["reason"] = "no_unit_enabled"
+            warnings.append(
+                {
+                    "code": "aggregation_no_unit_enabled",
+                    "fallback": "measure",
+                }
+            )
+            return base
+
+        unit_id: str | None = None
+        if len(enabled_units) == 1:
+            unit_id = enabled_units[0]
+        else:
+            intent_unit = str(intent.get("aggregation_unit") or "").strip()
+            default_unit = str(raw.get("default_unit") or "").strip()
+            if intent_unit and intent_unit in enabled_units:
+                unit_id = intent_unit
+            elif default_unit and default_unit in enabled_units:
+                unit_id = default_unit
+            else:
+                base["reason"] = "ambiguous"
+                warnings.append(
+                    {
+                        "code": "aggregation_unit_ambiguous",
+                        "enabled_units": enabled_units,
+                        "default_unit": default_unit or None,
+                        "intent_aggregation_unit": intent_unit or None,
+                        "fallback": "measure",
+                    }
+                )
+                return base
+
+        unit_cfg = dict(unites_raw.get(unit_id, {}))
+        merged = {**defaults, **unit_cfg}
+        tol_level = str(merged.get("tolerance_level", "aggregated_unit")).strip()
+        if tol_level == "measure":
+            warnings.append(
+                {
+                    "code": "tolerance_level_measure_not_supported",
+                    "requested": "measure",
+                    "applied": "aggregated_unit",
+                }
+            )
+        value_agg = str(merged.get("value_aggregation", "mean")).strip().lower()
+        if value_agg not in ("mean", "median", "max", "min"):
+            value_agg = "mean"
+            warnings.append(
+                {
+                    "code": "value_aggregation_invalid",
+                    "applied": "mean",
+                }
+            )
+
+        unit_column = str(merged.get("unit_column") or "").strip()
+        if not unit_column:
+            base["reason"] = "missing_unit_column"
+            warnings.append(
+                {
+                    "code": "aggregation_unit_column_missing",
+                    "unit_id": unit_id,
+                    "fallback": "measure",
+                }
+            )
+            return base
+
+        base.update(
+            {
+                "active": True,
+                "reason": "ok",
+                "unit_id": unit_id,
+                "unit_column": unit_column,
+                "label": merged.get("label"),
+                "min_observations_per_unit": int(
+                    merged.get("min_observations_per_unit", 6)
+                ),
+                "value_aggregation": value_agg,
+                "tolerance_level": "aggregated_unit",
+                "min_units_per_group": int(merged.get("min_units_per_group", 3)),
+                "min_units_for_cpk": int(merged.get("min_units_for_cpk", 30)),
+            }
+        )
+        return base
+
     def get_analyse_etendue(self) -> dict:
         """Section YAML analyse_etendue — plafonds S3/S5 (S3-extended §5)."""
         raw = self.raw.get("analyse_etendue", {})

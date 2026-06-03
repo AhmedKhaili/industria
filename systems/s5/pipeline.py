@@ -12,6 +12,7 @@ from systems.s5.agents import (
     r1_interpreter,
     r2_verifier,
     r3_graph_interpreter,
+    r3_portrait_charts,
     r4_coherence,
     r5_corrector,
     r6_synthesizer,
@@ -81,6 +82,27 @@ class S5Pipeline:
 
             interpretations = list(r2["interpretations"])
             fidelite_score = float(r2.get("fidelite_score", 0.0))
+
+            if str(intent.get("intention", "")).lower() == "portrait_statistique":
+                charts = list(
+                    s4_output.get("charts") or s4_output.get("graphs") or []
+                )
+                if charts:
+                    t0 = time.perf_counter()
+                    pr = r3_portrait_charts.run(
+                        charts, specialist_results, intent, self.ctx
+                    )
+                    _trace_step(
+                        trace,
+                        "r3_portrait_charts",
+                        pr,
+                        t0,
+                        n_charts=len(charts),
+                    )
+                    if pr.get("error"):
+                        warnings.append(f"Portrait charts : {pr['error']}")
+                    interpretations.extend(pr.get("interpretations") or [])
+
             reject_warnings = [
                 f"Interprétation automatique indisponible pour {it.get('specialist', 'spécialiste')} "
                 "— données brutes affichées"

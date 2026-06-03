@@ -14,6 +14,7 @@ if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
 from specialists.base import BaseSpecialist
+from systems.stats.portrait_metrics import enrich_descriptive_stats
 
 MIN_N = 5
 
@@ -67,9 +68,15 @@ class DescriptiveSpecialist(BaseSpecialist):
         q3 = float(series.quantile(0.75))
 
         pct_hors: float | None = None
+        pct_sous_lti: float | None = None
+        pct_au_dessus_lts: float | None = None
         if lti_f is not None and lts_f is not None and lts_f > lti_f:
-            hors = (series < lti_f) | (series > lts_f)
+            sous = series < lti_f
+            au_dessus = series > lts_f
+            hors = sous | au_dessus
             pct_hors = round(float(hors.sum()) / n * 100, 3)
+            pct_sous_lti = round(float(sous.sum()) / n * 100, 3)
+            pct_au_dessus_lts = round(float(au_dessus.sum()) / n * 100, 3)
 
         centrage: float | None = None
         if (
@@ -91,6 +98,9 @@ class DescriptiveSpecialist(BaseSpecialist):
         else:
             interp_disp = f"Dispersion σ={dispersion:.3f} sur {n} mesures."
 
+        values = series.to_numpy(dtype=float)
+        extras = enrich_descriptive_stats(values, lti=lti_f, lts=lts_f)
+
         return {
             "colonne": target_column,
             "n": n,
@@ -104,8 +114,17 @@ class DescriptiveSpecialist(BaseSpecialist):
             "max": round(float(series.max()), 3),
             "q1": round(q1, 3),
             "q3": round(q3, 3),
-            "iqr": round(q3 - q1, 3),
+            "iqr": extras.get("iqr", round(q3 - q1, 3)),
             "pct_hors_lti_lts": pct_hors,
+            "pct_sous_lti": pct_sous_lti,
+            "pct_au_dessus_lts": pct_au_dessus_lts,
+            "ic95_bas": extras.get("ic95_bas"),
+            "ic95_haut": extras.get("ic95_haut"),
+            "ic95_label": extras.get("ic95_label"),
+            "cv_pct": extras.get("cv_pct"),
+            "nb_outliers": extras.get("nb_outliers"),
+            "p5": extras.get("p5"),
+            "p95": extras.get("p95"),
             "centrage": centrage,
             "lti": lti_f,
             "lts": lts_f,

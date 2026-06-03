@@ -33,6 +33,28 @@ dataset:
       USINAGE: [usinage, a l usinage, au usinage]
       CONTROLE: [controle, contrôle, au controle]
 
+  # P6 Phase 2b — agrégation métier F2 (unité configurable, pas de logique OF en dur)
+  agregation_metier_f2:
+    enabled: true
+    preferred_output: both
+    default_unit: lot_unitaire
+    fallback_to_measure: true
+    defaults:
+      min_observations_per_unit: 2
+      value_aggregation: mean
+      tolerance_level: aggregated_unit
+      min_units_per_group: 2
+      min_units_for_cpk: 4
+    unites:
+      lot_unitaire:
+        enabled: true
+        unit_column: Lot_ID
+        label: lot de production
+      ordre_prod:
+        enabled: false
+        unit_column: Order_ID
+        label: ordre de fabrication
+
 entites:
   facteurs_analyse:
     USINAGE:
@@ -45,6 +67,12 @@ entites:
         description: "fournisseur matiere"
         colonne: "Fournisseur"
         synonymes: [fournisseur, origine]
+    TEST:
+      facteur_quali:
+        description: "description longue facteur qualitatif de test pour generic"
+        libelle_court: "Facteur test"
+        colonne: "FACTEUR_QUALI_TEST"
+        synonymes: [facteur quali test]
   groupes_variables:
     USINAGE:
       diametre:
@@ -56,6 +84,12 @@ entites:
         description: "rugosite mesuree"
         pattern_tag: "RUG_*"
         synonymes: [rugosite, rugosité]
+    TEST:
+      variable_quanti:
+        description: "description longue variable quanti de test pour generic"
+        libelle_court: "Variable test"
+        pattern_tag: "VARIABLE_QUANTI_*"
+        synonymes: [variable quanti test]
   intentions:
     conformite:
       description: "conformite aux tolerances"

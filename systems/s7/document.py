@@ -40,10 +40,46 @@ class ReportDocument:
                 for row in data["rows"]:
                     if isinstance(row, (list, tuple)):
                         parts.extend(str(c) for c in row)
-            for key in ("action", "text", "caption", "title", "synthese_s5", "synthese_s6"):
+            for key in (
+                "action",
+                "text",
+                "caption",
+                "title",
+                "synthese_s5",
+                "synthese_s6",
+                "intro",
+                "verdict_normalite",
+                "loi_retenue",
+            ):
                 val = data.get(key)
                 if isinstance(val, str):
                     parts.append(val)
+            for card in data.get("variables") or []:
+                if isinstance(card, dict):
+                    parts.append(str(card.get("variable", "")))
+                    parts.append(str(card.get("verdict_normalite", "")))
+                    parts.append(str(card.get("loi_retenue", "")))
+                    for row in card.get("rows") or []:
+                        if isinstance(row, (list, tuple)):
+                            parts.extend(str(c) for c in row)
+            for line in data.get("dunn_summary") or []:
+                parts.append(str(line))
+            for fact in data.get("facts") or []:
+                if isinstance(fact, dict):
+                    parts.append(str(fact.get("value", "")))
+            for sec in data.get("sections") or []:
+                if isinstance(sec, dict):
+                    parts.extend(str(p) for p in sec.get("paragraphs") or [])
+            for grp in data.get("groups") or []:
+                if isinstance(grp, dict):
+                    ci = grp.get("ci95_mean")
+                    if isinstance(ci, dict):
+                        parts.append(str(ci.get("label", "")))
+            for row in data.get("rows") or []:
+                if isinstance(row, dict):
+                    for k in ("value", "mean_display", "out_of_tolerance_rate_display"):
+                        if row.get(k) is not None:
+                            parts.append(str(row[k]))
             for item in data.get("items") or data.get("recommendations") or []:
                 if isinstance(item, dict):
                     for k in ("action", "text", "specialist", "justification"):

@@ -35,7 +35,11 @@ class S4Pipeline:
                 return self._empty_error(disp["error"], trace)
 
             charts_res = chart_builder.build_charts(
-                df_propre, intent, self.ctx, disp["chart_types"]
+                df_propre,
+                intent,
+                self.ctx,
+                disp["chart_types"],
+                specialist_results=specialist_results,
             )
             trace.append({"step": "chart_builder", "ok": charts_res.get("error") is None})
             if charts_res.get("error"):
