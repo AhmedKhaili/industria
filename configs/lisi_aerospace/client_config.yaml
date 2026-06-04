@@ -6,7 +6,7 @@
 # ============================================================
 
 client:
-  nom: "LISI Aerospace"
+  nom: "Demo Aerospace Client"
   site: "Site démo"
   secteur: "aeronautique"
   langue: "fr"
