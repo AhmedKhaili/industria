@@ -81,7 +81,8 @@ def run(df: pd.DataFrame, context: "ClientContext") -> dict:
 
             if action == "supprimer_si_invalide" and "valeurs_valides" in rule:
                 valid = set(rule["valeurs_valides"])
-                mask_valid = working[col].isin(valid)
+                empty = _is_empty_value(working[col])
+                mask_valid = working[col].isin(valid) | empty
                 invalid = working[~mask_valid]
                 if len(invalid):
                     anomalies.append(invalid)
