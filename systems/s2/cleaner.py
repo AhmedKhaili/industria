@@ -4,12 +4,31 @@ Nettoyage des données selon dataset.regles_nettoyage du YAML S0.
 
 from __future__ import annotations
 
+import re
 from typing import TYPE_CHECKING
 
 import pandas as pd
 
 if TYPE_CHECKING:
     from systems.s1.client_context import ClientContext
+
+_FR_DECIMAL_COMMA = re.compile(r"^-?\d+,\d+$")
+
+
+def _is_empty_value(series: pd.Series) -> pd.Series:
+    """Valeurs manquantes ou chaîne vide (colonnes PAS souvent vides en LONG)."""
+    as_str = series.astype(str).str.strip()
+    return series.isna() | as_str.eq("") | as_str.str.lower().isin(("nan", "none"))
+
+
+def _parse_numeric_locale(series: pd.Series) -> pd.Series:
+    """
+    Convertit en numérique ; accepte la virgule décimale française (ex. -18,5).
+    """
+    as_str = series.astype(str).str.strip()
+    fr_mask = as_str.str.match(_FR_DECIMAL_COMMA.pattern, na=False)
+    normalized = as_str.where(~fr_mask, as_str.str.replace(",", ".", regex=False))
+    return pd.to_numeric(normalized, errors="coerce")
 
 
 def _eval_condition(series: pd.Series, condition: str) -> pd.Series:
@@ -62,16 +81,18 @@ def run(df: pd.DataFrame, context: "ClientContext") -> dict:
 
             if action == "supprimer_si_invalide" and "valeurs_valides" in rule:
                 valid = set(rule["valeurs_valides"])
-                mask_valid = working[col].isin(valid)
+                empty = _is_empty_value(working[col])
+                mask_valid = working[col].isin(valid) | empty
                 invalid = working[~mask_valid]
                 if len(invalid):
                     anomalies.append(invalid)
                 working = working[mask_valid]
                 removed = before - len(working)
             elif action == "supprimer_si_invalide" and "condition" in rule:
-                numeric = pd.to_numeric(working[col], errors="coerce")
-                mask_valid = _eval_condition(numeric, rule["condition"])
-                mask_valid = mask_valid | numeric.isna()
+                numeric = _parse_numeric_locale(working[col])
+                empty = _is_empty_value(working[col])
+                mask_valid = _eval_condition(numeric, rule["condition"]) & numeric.notna()
+                mask_valid = mask_valid | empty
                 invalid = working[~mask_valid]
                 if len(invalid):
                     anomalies.append(invalid)
