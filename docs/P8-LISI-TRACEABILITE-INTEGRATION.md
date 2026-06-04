@@ -1,6 +1,6 @@
 # P8 — Intégration export complet traçabilité LISI
 
-> **Statut** : en cours — Phase I0–I1 (spec + YAML préparatoire)  
+> **Statut** : Phase I0–I1 livrée (`e053e11`) — plan tests `df_propre` intégré avant I2  
 > **Branche** : `feat/lisi-traceability-export-integration`  
 > **Prérequis** : `docs/VISION.md`, `docs/P6-CARTOGRAPHIE-ANALYTIQUE.md`, `docs/P7-F2-COMPACT-SPEC.md`, `docs/PHILOSOPHY.md`
 
@@ -74,9 +74,9 @@ Tags LONG `PAS_E` / `PAS_I` : `Value` toujours vide ; **l’info pastille est da
 |-------|---------|--------|
 | **I0** | Ce document | ✅ |
 | **I1** | YAML : mappings, `pivot_index_keys`, `agregation_metier_f2` (disabled), `fichier_tracabilite` | ✅ |
-| **I2** | `pivotter.py` lit `dataset.pivot_index_keys` ; option normalisation retaille | ⏳ |
+| **I2** | `pivotter.py` lit `dataset.pivot_index_keys` ; option normalisation retaille ; **prérequis** : cas §11 verts | ⏳ |
 | **I3** | Bascule `dataset.fichier` + rebuild cache forcé + manifeste enrichi | ⏳ |
-| **I4** | Tests S2 traçabilité (+ fixture CSV léger CI) | ⏳ |
+| **I4** | Tests automatisés §11 sur **sortie réelle** `intent` + `df_propre` (S1→S2) | ⏳ |
 | **I5** | Doc VISION / P7 §18 ; entités S1 OF / pièce contrôlée | ⏳ |
 
 ---
@@ -106,7 +106,7 @@ Ordre proposé :
 6. `machine`
 7. `matrice`
 
-Les clés `pas_*` restent gérées par la logique actuelle du pivotter jusqu’à harmonisation Phase I2.
+Phase **I2** doit aussi garantir que les colonnes `PAS_*` physiques restent dans l’index pivot (logique `pas_*` actuelle du pivotter + inclusion explicite via `pivot_index_keys` si harmonisation).
 
 ### `agregation_metier_f2`
 
@@ -138,11 +138,158 @@ Tant que **Phase I2** n’est pas livrée :
 - F3 « propre » (corrélation sur même pièce), F2 pastilles exploitables, agrégation OF : **bloqués côté pipeline** malgré la présence des colonnes dans le CSV.
 - Les colonnes existent en parquet **après rebuild** sur le bon fichier, mais disparaissent du wide si l’index pivot ne les inclut pas.
 
-**Critère de déblocage F3** : test T5/T6 (appariement CRx par `Numero Piece Contrôlée`) vert après I2 + I3.
+**Critère de déblocage F3** : cas **TC-01** et **TC-02** (§11) verts après I2 + I3.
 
 ---
 
-## 8. Faisabilité post-intégration complète (rappel)
+## 8. Tests d’acceptation pipeline — `df_propre` réel (I2 / I4)
+
+> **Principe** : l’intégration traçabilité n’est validée que si, pour une **question métier donnée**, la chaîne **S1 → S2** produit un `intent` correct et un `df_propre` contenant les **bonnes variables** et les **bonnes colonnes de traçabilité** après pivot.  
+> Vérifier uniquement le YAML ou les colonnes du parquet **ne suffit pas**.
+
+### Prérequis d’exécution (tous les cas TC-01 à TC-04)
+
+| Prérequis | Détail |
+|-----------|--------|
+| Config | `configs/lisi_aerospace/client_config_traceability.yaml` (`dataset.fichier` → export 18 cols) |
+| Données | `data/lisi_capteurs_export_complet_tracabilite.csv` présent localement |
+| Cache | Rebuild complet `data/cache/lisi_aerospace/` (checklist §6) |
+| Code | Phase **I2** livrée (`pivot_index_keys` + `pas_*` dans l’index pivot) |
+| Hors scope exécution | Pas de PDF, pas de S3/S7, pas de `f2_compact_enabled` |
+
+**Méthode de vérification** (manuelle ou pytest Phase I4) :
+
+1. `intent = S1Pipeline(yaml_traceability).run(question)` — assertions sur `variables`, `operation`, `piece`, `group_by`.
+2. `result = S2Pipeline(yaml_traceability).run(intent)` — `result["error"] is None`.
+3. `df = result["df_propre"]` — assertions sur **noms de colonnes** et, si pertinent, `cleaning_stats` / `df_anomalies`.
+
+---
+
+### TC-01 — F3 intra-opération FILAGE (corrélation future)
+
+**Question** :
+
+```text
+Analyser la relation entre CR1 et CR2 sur RD4L1A1C au filage
+```
+
+| Contrôle | Attendu |
+|----------|---------|
+| **S1 — variables** | `CR1`, `CR2` (ordre indifférent) |
+| **S1 — operation** | `FILAGE` |
+| **S1 — piece (modèle)** | `RD4L1A1C` |
+| **S1 — intention** | compatible F3 / association (ex. `comparaison_groupes` ou intention dédiée F3 à trancher en I5) |
+| **df_propre — variables** | colonnes `CR1`, `CR2` présentes |
+| **df_propre — traçabilité** | `Numero Piece Contrôlée`, `Numero OF MAR`, `Date`, `Numero Machine` |
+| **df_propre — modèle** | `Designation Reference` = `RD4L1A1C` sur toutes les lignes |
+| **Pivot** | pas de `Tag` / `Value` ; clés traçabilité **non perdues** |
+| **Appariement** | pour une même `Numero Piece Contrôlée`, `CR1` et `CR2` non null sur la **même ligne** (≥ 95 % des pièces avec les deux mesures ; doublons timestamp documentés) |
+
+---
+
+### TC-02 — F3 intra-opération EQUATOR
+
+**Question** :
+
+```text
+Analyser la relation entre CR50_INTRADOS_VRILLAGE et CR70_INTRADOS_VRILLAGE sur RD4L1A1C EQUATOR
+```
+
+| Contrôle | Attendu |
+|----------|---------|
+| **S1 — variables** | `CR50_INTRADOS_VRILLAGE`, `CR70_INTRADOS_VRILLAGE` |
+| **S1 — operation** | `EQUATOR` |
+| **S1 — piece (modèle)** | `RD4L1A1C` |
+| **df_propre — variables** | les deux colonnes CR50 / CR70 |
+| **df_propre — traçabilité** | `Numero Piece Contrôlée`, `Numero OF MAR`, `Ref_Matrice`, `Numero Machine`, `Date` |
+| **Pivot** | pas de perte des clés de traçabilité au pivot |
+| **Appariement** | même logique TC-01 sur `Numero Piece Contrôlée` |
+
+---
+
+### TC-03 — F2 FILAGE × passage pastille extérieure
+
+**Question** :
+
+```text
+Comparer CR1 selon le numéro de passage de la pastille extérieure sur RD4L1A1C au filage
+```
+
+| Contrôle | Attendu |
+|----------|---------|
+| **S1 — variable** | `CR1` |
+| **S1 — group_by** | `PAS_E_Numero_Passage` |
+| **S1 — operation** | `FILAGE` |
+| **S1 — piece** | `RD4L1A1C` |
+| **S2 — nettoyage** | `cleaning_stats.rules.PAS_E_Numero_Passage.status` = **`applied`** (plus `colonne_absente`) |
+| **S2 — valeurs passage** | uniquement `P1` / `P2` dans `df_propre` ; hors {P1,P2} dans `df_anomalies` ou absents |
+| **df_propre — colonnes** | `CR1`, `PAS_E_Numero_Passage`, `Numero Piece Contrôlée`, `Numero OF MAR` (+ index usuels `Date`, `Numero Machine`, `Designation Reference`) |
+
+---
+
+### TC-04 — F2 FILAGE × niveau retaille extérieur
+
+**Question** :
+
+```text
+Comparer CR1 selon le niveau retaillé de la pastille extérieure sur RD4L1A1C au filage
+```
+
+| Contrôle | Attendu |
+|----------|---------|
+| **S1 — variable** | `CR1` |
+| **S1 — group_by** | `PAS_E_Niveau_Retaille` |
+| **S1 — operation** | `FILAGE` |
+| **S2 — nettoyage** | `cleaning_stats.rules.PAS_E_Niveau_Retaille.status` = **`applied`** |
+| **Règle métier** | valeurs dans `df_propre` : retaille **≤ 0** (après parsing numérique, virgule décimale incluse) |
+| **Anomalies** | valeurs strictement positives dans `df_anomalies` ou absentes de `df_propre` |
+| **df_propre — colonnes** | `CR1`, `PAS_E_Niveau_Retaille`, `Numero Piece Contrôlée`, `Numero OF MAR` |
+
+---
+
+### TC-05 — Agrégation OF (test futur — hors I2/I4 immédiat)
+
+**Question** :
+
+```text
+Comparer CR1 selon la presse par OF sur RD4L1A1C au filage
+```
+
+| Contrôle | Attendu (futur) |
+|----------|-----------------|
+| **S1 — variable** | `CR1` |
+| **S1 — group_by** | `Numero Machine` (presse) |
+| **S3 — unité** | agrégation par `Numero OF MAR` via `agregation_metier_f2` (`enabled: true`, unité `of_mar`) |
+| **Phase** | après activation explicite `agregation_metier_f2` + routage S3 ; **documenter seulement** en I4 |
+
+---
+
+## 9. Plan tests automatisés (Phase I4)
+
+Fichier cible : `systems/s2/tests/test_s2_traceability_pipeline.py` (et/ou `systems/s1/tests/test_s1_traceability_intent.py`).
+
+| ID | Test pytest (proposé) | Chaîne | Skip si |
+|----|------------------------|--------|---------|
+| TC-01 | `test_tc01_filage_cr1_cr2_df_propre_columns_and_pairing` | S1→S2 | export ou cache absent |
+| TC-02 | `test_tc02_equator_cr50_cr70_df_propre_columns` | S1→S2 | idem |
+| TC-03 | `test_tc03_filage_passage_pastille_applied_and_columns` | S1→S2 | idem |
+| TC-04 | `test_tc04_filage_retaille_rule_applied_and_non_positive` | S1→S2 | idem |
+| TC-05 | `test_tc05_of_aggregation_skipped_until_enabled` | — | `@pytest.mark.skip` jusqu’à Phase agrégation |
+
+**Assertions obligatoires dans chaque test** :
+
+- `assert col in df.columns` pour chaque colonne attendue (noms **physiques** CSV, pas clés YAML abstraites).
+- `assert "Tag" not in df.columns` et `assert "Value" not in df.columns`.
+- Pour TC-03/04 : parcours `result["cleaning_stats"]["rules"]`.
+- Pour TC-01/02 : sous-ensemble de lignes où les deux variables sont non null, grouper par `Numero Piece Contrôlée`, vérifier une ligne par pièce (ou quota documenté).
+
+**Fixture** : option petit CSV d’extrait (~2k lignes) pour CI sans 500 Mo — sinon `@pytest.mark.integration` + skip si fichier manquant.
+
+**Critère de sortie I4** : TC-01 à TC-04 verts sur `client_config_traceability.yaml` ; tests legacy (`client_config.yaml` + ancien CSV) restent verts en parallèle.
+
+---
+
+## 10. Faisabilité post-intégration complète (rappel)
 
 | Capacité | Après I1 seul | Après I2 + I3 |
 |----------|---------------|---------------|
@@ -153,7 +300,7 @@ Tant que **Phase I2** n’est pas livrée :
 
 ---
 
-## 9. Hors scope chantier global
+## 11. Hors scope chantier global
 
 - PDF, F2 compact, `f2_compact_enabled: true`
 - Code F3, S7, modification S3/S4
@@ -162,7 +309,7 @@ Tant que **Phase I2** n’est pas livrée :
 
 ---
 
-## 10. Références
+## 12. Références
 
 - Audit traçabilité (conversation) : export 18 cols, tags pastille vides en LONG.
 - `systems/s2/pivotter.py` : `meta_keys` figées — à généraliser Phase I2.
