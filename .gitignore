@@ -219,6 +219,7 @@ __marimo__/
 
 # IndustrIA — données locales (ITAR / volumétrie)
 data/lisi_capteurs.csv
+data/lisi_capteurs_export_complet_tracabilite.csv
 data/cache/
 data/chroma_db/
 reports/*.pdf

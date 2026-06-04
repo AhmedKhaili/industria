@@ -1,4 +1,4 @@
-# ============================================================
+﻿# ============================================================
 # CLIENT CONFIG — IndustrIA v2.0
 # Client démo aéronautique (portfolio — dossier configs/lisi_aerospace inchangé)
 # Auteur : Ahmed Khaili
@@ -25,7 +25,7 @@ dataset:
   format: "LONG"
   source: "csv"
   # Actif S2 aujourd'hui — ne pas basculer avant Phase I3 (tests + rebuild cache)
-  fichier: "data/lisi_capteurs.csv"
+  fichier: "data/lisi_capteurs_export_complet_tracabilite.csv"
   # Export complet traçabilité (OF, pièce contrôlée, PAS_*, Nominal) — bascule Phase I3
   fichier_tracabilite: "data/lisi_capteurs_export_complet_tracabilite.csv"
   separateur: ";"

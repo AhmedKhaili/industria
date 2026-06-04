@@ -29,7 +29,7 @@ def csv_path(yaml_path: str, context: "ClientContext") -> Path:
 
 
 def client_slug(context: "ClientContext") -> str:
-    """Ex. « LISI Aerospace » → lisi_aerospace (depuis context.raw['client']['nom'])."""
+    """Ex. « Client Demo » → client_demo (depuis context.raw['client']['nom'])."""
     nom = (context.raw.get("client") or {}).get("nom") or "client"
     normalized = unicodedata.normalize("NFKD", str(nom))
     ascii_nom = normalized.encode("ascii", "ignore").decode("ascii")
@@ -59,6 +59,31 @@ def _needs_rebuild(csv: Path, cache: Path) -> bool:
     except (json.JSONDecodeError, OSError):
         return True
     return float(data.get("csv_mtime", 0)) < csv.stat().st_mtime
+
+
+def _coerce_for_parquet(df: pd.DataFrame, context: "ClientContext") -> pd.DataFrame:
+    """
+    PyArrow refuse les colonnes object mélangées (ex. Numero OF MAR int + str).
+    Harmonise en chaînes les colonnes métier susceptibles de types hétérogènes.
+    """
+    out = df.copy()
+    keys = (
+        "numero_of",
+        "numero_piece",
+        "matrice",
+        "machine",
+        "piece",
+        "operation",
+    )
+    for key in keys:
+        col = context.colonnes.get(key)
+        if col and col in out.columns:
+            out[col] = out[col].map(lambda x: None if pd.isna(x) else str(x))
+    for col in out.columns:
+        if out[col].dtype != object:
+            continue
+        out[col] = out[col].map(lambda x: None if pd.isna(x) else str(x))
+    return out
 
 
 def _write_manifest(csv: Path, cache: Path, partition_count: int) -> None:
@@ -130,6 +155,7 @@ def ensure_partitions(
             out_dir = cache / str(op)
             out_dir.mkdir(parents=True, exist_ok=True)
             df = pd.concat(parts, ignore_index=True)
+            df = _coerce_for_parquet(df, context)
             out_file = out_dir / f"{piece}.parquet"
             df.to_parquet(out_file, index=False)
             partition_count += 1
