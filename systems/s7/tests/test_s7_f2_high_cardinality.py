@@ -12,6 +12,8 @@ from systems.s1.client_context import ClientContext
 from systems.s7 import prep
 from systems.s7.f2_compact_blocks import build_f2_compact_document
 from systems.s7.f2_compact_selection import build_f2_compact_selection
+from systems.s7.f2_compact_blocks import _build_group_comparison_table
+from systems.s7.f2_compact_display import format_effectif_display
 from systems.s7.f2_high_cardinality import (
     apply_high_cardinality_projection,
     build_high_cardinality_projection,
@@ -229,6 +231,35 @@ class TestHighCardinalityDocumentIntegration:
         table = doc.find("group_comparison_table")
         assert table is not None
         assert len(table.data["rows"]) == 2
+
+
+def test_format_effectif_display_large_n() -> None:
+    assert format_effectif_display(37301) == "37\u202f301"
+    assert format_effectif_display(655) == "655"
+
+
+def test_remainder_row_n_not_truncated_in_comparison_table() -> None:
+    remainder = {
+        "group_value": "Autres modalités",
+        "n": 37301,
+        "mean": 41.68,
+        "std": 0.107,
+        "out_of_tolerance_rate": 0.0,
+        "cpk": 0.594,
+        "rank": None,
+        "severity_label": "surveillance",
+        "is_remainder_aggregate": True,
+    }
+    table = _build_group_comparison_table(
+        [remainder],
+        "upper",
+        "facteur test",
+        verdict_key="NO_GO",
+    )
+    row = table["rows"][0]
+    assert row["n"] == 37301
+    assert row["n_display"] == "37\u202f301"
+    assert "3730" != row["n_display"]
 
 
 def test_build_projection_pure_function_ranking_preserved() -> None:

@@ -200,6 +200,75 @@ def _col_key(label: str) -> str:
     return mapping.get(label, label)
 
 
+_F2_GROUP_COMPARISON_COL_WIDTHS = (
+    0.20,  # Groupe
+    0.11,  # n (effectifs 5–6 chiffres)
+    0.10,  # Moyenne
+    0.09,  # Écart-type
+    0.11,  # % hors tol.
+    0.07,  # Cp
+    0.07,  # Cpk
+    0.06,  # Rang
+    0.19,  # Niveau
+)
+
+
+def _render_f2_group_comparison_table(
+    story: list[Any],
+    *,
+    columns: list[str],
+    rows: list[Any],
+    styles: dict[str, ParagraphStyle],
+    clean,
+    footnote: str | None = None,
+) -> None:
+    """Tableau F2 compact — largeurs proportionnelles (évite troncature de n)."""
+    if not columns or not rows:
+        story.append(Paragraph("Aucune donnée.", styles["body"]))
+        return
+    body_style = styles["body"]
+    table_rows: list[list[Any]] = [
+        [Paragraph(f"<b>{clean(str(c))}</b>", body_style) for c in columns]
+    ]
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        cells: list[Any] = []
+        for col in columns:
+            if col == "n":
+                raw = row.get("n_display", row.get("n"))
+            else:
+                key = _col_key(col)
+                raw = row.get(key)
+                if raw is None and key != col:
+                    raw = row.get(col)
+            cells.append(Paragraph(clean(str(raw if raw is not None else "—")), body_style))
+        table_rows.append(cells)
+
+    ncols = len(columns)
+    weights = _F2_GROUP_COMPARISON_COL_WIDTHS
+    if ncols == len(weights):
+        col_widths = [_CONTENT_WIDTH * w for w in weights]
+    else:
+        col_widths = [_CONTENT_WIDTH / ncols] * ncols
+
+    tbl = Table(table_rows, colWidths=col_widths, repeatRows=1)
+    tbl.setStyle(
+        TableStyle(
+            [
+                ("BACKGROUND", (0, 0), (-1, 0), _HEADER),
+                ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+                ("FONTSIZE", (0, 0), (-1, -1), 8),
+                ("GRID", (0, 0), (-1, -1), 0.5, colors.lightgrey),
+                ("VALIGN", (0, 0), (-1, -1), "TOP"),
+            ]
+        )
+    )
+    story.extend([tbl, Spacer(1, 4 * mm)])
+    if footnote:
+        story.append(Paragraph(clean(str(footnote)), styles["caption"]))
+
+
 _F2_BLOCK_TYPES = frozenset(
     {
         "business_synthesis",
@@ -776,16 +845,27 @@ def render_pdf(
             elif btype == "group_comparison_table":
                 cols = list(data.get("columns") or [])
                 cell_clean = clean_cell if is_f2_compact else clean
-                _render_table_from_columns(
-                    story,
-                    cols,
-                    list(data.get("rows") or []),
-                    styles,
-                    cell_clean,
-                )
+                table_rows = list(data.get("rows") or [])
                 foot = data.get("footnote")
-                if foot:
-                    story.append(Paragraph(clean(str(foot)), styles["caption"]))
+                if is_f2_compact:
+                    _render_f2_group_comparison_table(
+                        story,
+                        columns=cols,
+                        rows=table_rows,
+                        styles=styles,
+                        clean=cell_clean,
+                        footnote=str(foot) if foot else None,
+                    )
+                else:
+                    _render_table_from_columns(
+                        story,
+                        cols,
+                        table_rows,
+                        styles,
+                        cell_clean,
+                    )
+                    if foot:
+                        story.append(Paragraph(clean(str(foot)), styles["caption"]))
             elif btype == "statistical_reliability":
                 note = data.get("measure_annex_note")
                 if note:
@@ -820,7 +900,7 @@ def render_pdf(
                         )
                     widths = [
                         _CONTENT_WIDTH * w
-                        for w in (0.18, 0.06, 0.1, 0.14, 0.1, 0.16, 0.08, 0.18)
+                        for w in (0.17, 0.10, 0.1, 0.13, 0.1, 0.15, 0.08, 0.17)
                     ]
                     if len(widths) != len(rel_cols):
                         widths = [_CONTENT_WIDTH / len(rel_cols)] * len(rel_cols)

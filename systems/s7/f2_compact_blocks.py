@@ -16,6 +16,7 @@ from systems.s7.f2_compact_display import (
     compact_report_title,
     exclusion_detail_client,
     favorable_indicator_label,
+    format_effectif_display,
     priority_entity_label,
     _fmt_num,
     _fmt_pct,
@@ -590,6 +591,7 @@ def _build_group_comparison_table(
             {
                 "group_value": row.get("group_value"),
                 "n": row.get("n"),
+                "n_display": format_effectif_display(row.get("n")),
                 "mean": row.get("mean"),
                 "mean_display": _fmt_num(row.get("mean")),
                 "std": row.get("std"),
@@ -642,7 +644,7 @@ def _build_statistical_reliability(
         table_rows.append(
             {
                 "Groupe": row.get("group_value"),
-                "n": row.get("n"),
+                "n": format_effectif_display(row.get("n")),
                 "Moyenne": _fmt_num(row.get("mean")),
                 "IC95 moyenne": ci95_display(row.get("ci95_mean")),
                 "% hors tolérance": _fmt_pct(row.get("out_of_tolerance_rate")),
