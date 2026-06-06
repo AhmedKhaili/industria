@@ -100,3 +100,62 @@ class TestCleanerRetailleLocale:
         assert res.get("error") is None
         assert len(res["df"]) < len(df)
         assert len(res["df_anomalies"]) > 0
+
+
+class TestNormalizeRetailleLevels:
+    def test_integer_variants_collapsed(self, ctx: ClientContext) -> None:
+        cases = ["-2", "-2,0", "-2.0"]
+        res = cleaner.run(_df_retaille(cases), ctx)
+        assert res.get("error") is None
+        kept = res["df"]["PAS_E_Niveau_Retaille"].astype(str).tolist()
+        assert kept == ["-2", "-2", "-2"]
+
+    def test_half_variants_collapsed(self, ctx: ClientContext) -> None:
+        cases = ["-2,5", "-2.5", "-2,50"]
+        res = cleaner.run(_df_retaille(cases), ctx)
+        assert res.get("error") is None
+        kept = res["df"]["PAS_E_Niveau_Retaille"].astype(str).tolist()
+        assert kept == ["-2,5", "-2,5", "-2,5"]
+
+    def test_zero_variants_collapsed(self, ctx: ClientContext) -> None:
+        cases = ["0", "0,0", "0.0"]
+        res = cleaner.run(_df_retaille(cases), ctx)
+        assert res.get("error") is None
+        kept = res["df"]["PAS_E_Niveau_Retaille"].astype(str).tolist()
+        assert kept == ["0", "0", "0"]
+
+    def test_positive_still_rejected(self, ctx: ClientContext) -> None:
+        res = cleaner.run(_df_retaille(["1", "2,5"]), ctx)
+        assert res.get("error") is None
+        assert len(res["df"]) == 0
+        assert set(res["df_anomalies"]["PAS_E_Niveau_Retaille"].astype(str)) >= {"1", "2,5"}
+
+    def test_empty_value_preserved(self, ctx: ClientContext) -> None:
+        res = cleaner.run(_df_retaille(["", "-1"]), ctx)
+        assert res.get("error") is None
+        kept = res["df"]["PAS_E_Niveau_Retaille"].astype(str).tolist()
+        assert "" in kept
+        assert "-1" in kept
+
+    def test_non_retaille_columns_unchanged(self, ctx: ClientContext) -> None:
+        df = pd.DataFrame(
+            {
+                "PAS_E_Niveau_Retaille": ["-1"],
+                "PAS_I_Niveau_Retaille": ["-1"],
+                "PAS_E_Numero_Passage": ["P1"],
+                "PAS_I_Numero_Passage": ["P2"],
+                "Tag": ["CR1"],
+                "Value": [1.0],
+            }
+        )
+        res = cleaner.run(df, ctx)
+        assert res.get("error") is None
+        row = res["df"].iloc[0]
+        assert row["PAS_E_Numero_Passage"] == "P1"
+        assert row["PAS_I_Numero_Passage"] == "P2"
+        assert row["Tag"] == "CR1"
+
+    def test_format_retaille_level_unit(self) -> None:
+        assert cleaner._format_retaille_level(-2.0) == "-2"
+        assert cleaner._format_retaille_level(-2.5) == "-2,5"
+        assert cleaner._format_retaille_level(0.0) == "0"

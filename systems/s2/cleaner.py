@@ -13,6 +13,29 @@ if TYPE_CHECKING:
     from systems.s1.client_context import ClientContext
 
 _FR_DECIMAL_COMMA = re.compile(r"^-?\d+,\d+$")
+_RETAILLE_LEVEL_COL = re.compile(r"Niveau_Retaille", re.IGNORECASE)
+
+
+def _is_retaille_level_column(col: str) -> bool:
+    return bool(_RETAILLE_LEVEL_COL.search(col))
+
+
+def _format_retaille_level(num: float) -> str:
+    """Affichage canonique : entier (-2), demi (-2,5), zéro (0)."""
+    if num == int(num):
+        return str(int(num))
+    return f"{num:g}".replace(".", ",")
+
+
+def _normalize_retaille_display(series: pd.Series) -> pd.Series:
+    """Unifie les variantes de format (-2 / -2,0 / -2.0) sans changer le sens métier."""
+    empty = _is_empty_value(series)
+    numeric = _parse_numeric_locale(series)
+    out = series.astype(object).copy()
+    mask = ~empty & numeric.notna()
+    if mask.any():
+        out.loc[mask] = numeric.loc[mask].map(_format_retaille_level)
+    return out
 
 
 def _is_empty_value(series: pd.Series) -> pd.Series:
@@ -97,6 +120,8 @@ def run(df: pd.DataFrame, context: "ClientContext") -> dict:
                 if len(invalid):
                     anomalies.append(invalid)
                 working = working[mask_valid]
+                if _is_retaille_level_column(col):
+                    working[col] = _normalize_retaille_display(working[col])
                 removed = before - len(working)
             else:
                 stats["rules"][col] = {"status": "skipped", "reason": "action_inconnue"}
