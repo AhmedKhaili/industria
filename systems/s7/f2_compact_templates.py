@@ -141,6 +141,34 @@ def _paragraph_critique_compact(
     return text
 
 
+def _pluralize_factor_label(factor_label: str) -> str:
+    """Pluralise le premier nom du libellé facteur (lecture métier F2 compact)."""
+    label = (factor_label or "").strip()
+    if not label:
+        return "groupes"
+    lower = label.lower()
+    for singular, plural in (
+        ("niveau de ", "niveaux de "),
+        ("numéro de ", "numéros de "),
+        ("numero de ", "numéros de "),
+        ("fournisseur de ", "fournisseurs de "),
+    ):
+        if lower.startswith(singular):
+            rest = label[len(singular) :]
+            head = plural[0].upper() + plural[1:] if label[0].isupper() else plural
+            return head + rest
+    if lower == "matrice":
+        return "Matrices" if label[0].isupper() else "matrices"
+    return label
+
+
+def _intermediate_section_heading(factor_label: str) -> str:
+    plural = _pluralize_factor_label(factor_label)
+    if plural and plural[0].islower():
+        plural = plural[0].upper() + plural[1:]
+    return f"{plural} intermédiaires à surveiller"
+
+
 def _referent_singular(unit: str, group_value: str) -> str:
     u = unit.strip().lower()
     if u == "matrice":
@@ -152,7 +180,8 @@ def _referent_plural_label(unit: str) -> str:
     u = unit.strip().lower()
     if u == "matrice":
         return "Les matrices"
-    return f"Les {u}s"
+    plural = _pluralize_factor_label(unit)
+    return f"Les {plural.lower()}" if plural else "Les groupes"
 
 
 def conclusion_key_paragraphs(
@@ -325,7 +354,7 @@ def business_reading_sections_compact(
         sections.append(
             {
                 "tier": "intermediaire",
-                "heading": f"{unit.capitalize()}s intermédiaires à surveiller",
+                "heading": _intermediate_section_heading(unit),
                 "paragraphs": [p_mid],
             }
         )
