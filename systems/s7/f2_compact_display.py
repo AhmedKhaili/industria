@@ -90,6 +90,18 @@ def looks_like_matrix_group_code(text: str) -> bool:
     return bool(_MATRIX_CODE_RE.match(str(text or "").strip()))
 
 
+def format_effectif_display(value: Any) -> str:
+    """Effectif entier lisible en PDF (espaces insécables, pas de troncature visuelle)."""
+    if value is None:
+        return "—"
+    try:
+        n = int(value)
+    except (TypeError, ValueError):
+        return "—"
+    # Espace fine insécable (U+202F) — regroupement milliers style français.
+    return f"{n:,}".replace(",", "\u202f")
+
+
 def _fmt_num(value: Any, decimals: int = 3) -> str:
     if value is None:
         return "—"
