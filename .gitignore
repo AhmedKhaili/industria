@@ -217,6 +217,10 @@ __marimo__/
 # Streamlit
 .streamlit/secrets.toml
 
+# IndustrIA — contexte privé (portfolio public)
+CONTEXT.md
+CONTEXT.local.md
+
 # IndustrIA — données locales (ITAR / volumétrie)
 data/lisi_capteurs.csv
 data/lisi_capteurs_export_complet_tracabilite.csv

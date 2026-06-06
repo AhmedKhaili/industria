@@ -8,21 +8,21 @@ Un technicien pose une question en français ; le pipeline comprend l’intentio
 
 | Système | Rôle | Statut |
 |---------|------|--------|
-| S0 | Config client (`client_config.yaml`) | YAML LISI + générique |
+| S0 | Config client (`client_config.yaml`) | YAML client démo + générique |
 | S1 | Compréhension de la question → `intent.json` | Validé (32+ tests) |
-| S2 | ETL, pivot Long→Large, Parquet | Validé (LISI) |
+| S2 | ETL, pivot Long→Large, Parquet | Validé (client démo) |
 | S3 | Métriques (`specialists/`) | Validé |
 | S4 | Graphiques + descriptions tabulaires | Validé |
 | S5 | Interprétation LLM vérifiée (Ollama 14b) | Validé + E2E |
-| S6 | Recommandations actionnelles (P1–P4, profil) | Validé — tests LISI + critiques |
-| S7 | Rapport PDF EN9100 (SHA-256, `contrat_rapport`) | Validé — démo LISI (`systems/s7/`, 9 tests) |
+| S6 | Recommandations actionnelles (P1–P4, profil) | Validé — tests client démo + critiques |
+| S7 | Rapport PDF EN9100 (SHA-256, `contrat_rapport`) | Validé — démo aéronautique (`systems/s7/`, 9 tests) |
 | S8 | Monitoring temps réel, alertes P1–P4 | Prochain — spec à rédiger |
 
 Détail : [`docs/VISION.md`](docs/VISION.md) · specs : [`docs/S1.md`](docs/S1.md) … [`docs/S7.md`](docs/S7.md)
 
 ## Démarrage rapide
 
-**Prérequis** : Python 3.11+, [Ollama](https://ollama.com/) avec `qwen2.5-coder:14b`, données LISI en local.
+**Prérequis** : Python 3.11+, [Ollama](https://ollama.com/) avec `qwen2.5-coder:14b`, données client locales non versionnées.
 
 ```bash
 # Cloner et installer les dépendances du projet (pandas, pyarrow, pytest, requests, …)
@@ -53,7 +53,7 @@ print(s5.get('synthese', '')[:500])
 
 ```bash
 python -m pytest systems/s1/tests systems/s2/tests systems/s3/tests systems/s4/tests systems/s5/tests systems/s6/tests systems/s7/tests -q
-python -m pytest tests/test_pipeline_e2e.py -v   # chaîne S1→S5, données LISI réelles (Ollama)
+python -m pytest tests/test_pipeline_e2e.py -v   # chaîne S1→S5, données client locales non versionnées (Ollama)
 ```
 
 ## Structure du dépôt
@@ -82,6 +82,6 @@ Voir [`docs/PHILOSOPHY.md`](docs/PHILOSOPHY.md).
 - `enterprise/` : Business Source License 1.1 — usage production commercial selon `enterprise/LICENSE`  
 - Ancienne arborescence `core/` : Apache 2.0 si présente  
 
-## Client pilote
+## Client de démonstration
 
-**LISI Aerospace** — 4M+ lignes capteurs, opérations FILAGE / EQUATOR, métriques EN9100.
+**Client aéronautique démo** — 4M+ lignes capteurs, opérations FILAGE / EQUATOR, métriques EN9100.
