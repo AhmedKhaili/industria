@@ -14,7 +14,7 @@ Python = tous les calculs et décisions méthodologiques.
 
 | Système | Responsabilité | Mode |
 |---------|---------------|------|
-| S0 | Onboarding client → client_config.yaml | Manuel (Ahmed) |
+| S0 | Onboarding client → client_config.yaml | validation manuelle |
 | S1 | Comprendre la question → intent.json | Automatique |
 | S2 | Récupérer, pivoter, nettoyer → df_propre | Automatique |
 | S3 | Calculer les métriques pertinentes | Automatique |
@@ -37,7 +37,7 @@ Python = tous les calculs et décisions méthodologiques.
 - Toutes les passes 7b avant toutes les passes 14b
 - Conformité ITAR : zéro donnée hors du réseau local
 
-## Client actuel : LISI Aerospace
+## Client de démonstration : environnement aéronautique
 - CSV 4M lignes, format LONG (Tag + Value)
 - 16 colonnes, 2 opérations (FILAGE, EQUATOR)
 - 10 modèles de pièces
@@ -62,16 +62,16 @@ Python = tous les calculs et décisions méthodologiques.
 - **S8** : Monitoring temps réel — spec à rédiger
 
 ## Statut
-- S0 : ✅ YAML LISI + client générique (`configs/`)
+- S0 : ✅ YAML client démo + client générique (`configs/`)
 - S1 : ✅ VALIDÉ — 32+ tests (`systems/s1/`, docs/S1.md)
-- S2 : ✅ VALIDÉ — 6 tests LISI (`systems/s2/`, docs/S2.md)
+- S2 : ✅ VALIDÉ — 6 tests client démo (`systems/s2/`, docs/S2.md)
 - S3 : ✅ VALIDÉ — métriques + pre-gates (`systems/s3/`, docs/S3.md)
 - S4 : ✅ VALIDÉ — graphiques + tableaux (`systems/s4/`, docs/S4.md)
-- S5 : ✅ VALIDÉ — interprétation vérifiée, E2E LISI (`systems/s5/`, `tests/test_pipeline_e2e.py`, docs/S5.md)
-- S6 : ✅ VALIDÉ — recommandations P1–P4 (`systems/s6/`, docs/S6.md, tests LISI + critiques)
-- S7 : ✅ VALIDÉ — PDF EN9100 SHA-256, démo LISI v3 (`systems/s7/`, docs/S7.md, `report_port` + `renderer_stub`, 9 tests)
+- S5 : ✅ VALIDÉ — interprétation vérifiée, E2E client démo (`systems/s5/`, `tests/test_pipeline_e2e.py`, docs/S5.md)
+- S6 : ✅ VALIDÉ — recommandations P1–P4 (`systems/s6/`, docs/S6.md, tests client démo + critiques)
+- S7 : ✅ VALIDÉ — PDF EN9100 SHA-256, démo aéronautique v3 (`systems/s7/`, docs/S7.md, `report_port` + `renderer_stub`, 9 tests)
 - S8 : ⏳ PROCHAIN — monitoring temps réel, alertes P1–P4 (spec `docs/S8.md` à rédiger avant code)
 
 ## Méthode
 Un système à la fois.
-Définition → Code → Tests données LISI → Validation → Suivant.
+Définition → Code → Tests données client démo → Validation → Suivant.
