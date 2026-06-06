@@ -172,22 +172,45 @@ En mode **high-cardinality**, vérifier visuellement :
 
 ## 9. Commandes / workflow de démo
 
-### Script existant (référence)
+### Script démo F2 pastilles (recommandé)
 
-Le dépôt contient `scripts/generate_rapport_lisi.py` — pipeline **S1 → S7** complet avec écriture PDF :
+`scripts/demo_f2_pastilles.py` — wrapper local pour les **4 PDF validés** de la campagne :
+
+```bash
+# Aperçu sans génération
+python scripts/demo_f2_pastilles.py --dry-run --all
+
+# Générer les 4 PDF dans outputs/
+python scripts/demo_f2_pastilles.py --all
+
+# Un seul cas
+python scripts/demo_f2_pastilles.py --case retaille-int
+```
+
+| Option | Défaut | Rôle |
+|--------|--------|------|
+| `--all` | — | Génère passage ext/int + retaille ext/int |
+| `--case <id>` | — | `passage-ext`, `passage-int`, `retaille-ext`, `retaille-int` |
+| `--config` | `client_config_traceability.yaml` | Config client démo |
+| `--output-dir` | `outputs/` | Répertoire PDF local (gitignored) |
+| `--dry-run` | — | Affiche questions et chemins attendus |
+| `--profile` | `technicien` | Profil S5/S6/S7 |
+
+Le script active `f2_compact_enabled: true` **en mémoire** uniquement. Il affiche en console : chemin PDF, taille, pages, SHA-256, verdict, groupe prioritaire, high-cardinality actif ou non.
+
+**Prérequis** : export traçabilité local `data/lisi_capteurs_export_complet_tracabilite.csv` (gitignored).
+
+### Script générique (référence)
+
+`scripts/generate_rapport_lisi.py` — pipeline **S1 → S7** pour une question arbitraire (config `client_config.yaml` par défaut, F2 compact non activé) :
 
 ```bash
 python scripts/generate_rapport_lisi.py outputs/mon_rapport.pdf --question "Votre question ici"
 ```
 
-**Limites pour cette démo F2 pastilles** :
+### Parcours manuel (si besoin)
 
-- Le script pointe par défaut vers `configs/lisi_aerospace/client_config.yaml` (pas la variante traçabilité).
-- Le mode F2 compact requiert `f2_compact_enabled: true` **en mémoire** (non activé par défaut dans le YAML).
-
-### À adapter selon le script local (parcours F2 pastilles)
-
-Étapes générales validées par la campagne — à reproduire via votre wrapper local ou notebook :
+Étapes générales validées par la campagne — alternative au wrapper :
 
 | Étape | Action | Contrôle |
 |-------|--------|----------|
