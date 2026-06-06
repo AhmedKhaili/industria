@@ -96,5 +96,10 @@ class Agent5Clarifier:
                 "Conformité, comparaison, tendance ou détection d'anomalies ?"
             )
 
+        if "pastille_cote" in manque:
+            return (
+                "Précisez la pastille concernée : extérieure (PAS_E) ou intérieure (PAS_I) ?"
+            )
+
         opts = ", ".join(str(p) for p in propositions[:8])
         return f"Pouvez-vous préciser votre demande ? Options : {opts}"
