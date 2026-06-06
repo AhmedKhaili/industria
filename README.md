@@ -20,6 +20,37 @@ Un technicien pose une question en français ; le pipeline comprend l’intentio
 
 Détail : [`docs/VISION.md`](docs/VISION.md) · specs : [`docs/S1.md`](docs/S1.md) … [`docs/S7.md`](docs/S7.md)
 
+## Quick demo — F2 pastilles (client démo aéronautique)
+
+Génère localement **4 rapports PDF F2** validés sur le périmètre RD4L1A1C / FILAGE / CR1 :
+
+| # | Cas | Mode F2 |
+|---|-----|---------|
+| 1 | Passage pastille **extérieure** | F2 compact standard |
+| 2 | Passage pastille **intérieure** | F2 compact standard |
+| 3 | Niveau de retaille pastille **extérieure** | F2 compact + high-cardinality |
+| 4 | Niveau de retaille pastille **intérieure** | F2 compact + high-cardinality |
+
+**Prérequis** : export traçabilité local dans `data/` (gitignored), config `configs/lisi_aerospace/client_config_traceability.yaml`.
+
+```bash
+# Aperçu des questions et chemins PDF (sans génération)
+python scripts/demo_f2_pastilles.py --dry-run --all
+
+# Générer les 4 PDF dans outputs/ (non versionnés)
+python scripts/demo_f2_pastilles.py --all
+```
+
+Les PDF sont écrits dans `outputs/` (`f2_pastilles_*_RD4L1A1C.pdf`) — **jamais commités**.
+
+**Ce que la démo prouve** : F2 compact standard (faible cardinalité), F2 high-cardinality (top K + favorable + Autres modalités), labels métier depuis la config, rapport PDF traçable (SHA-256), pipeline **100 % local** S1 → S7.
+
+Documentation :
+
+- [`docs/DEMO_SCRIPT.md`](docs/DEMO_SCRIPT.md) — script de démo portfolio / client pilote
+- [`docs/CLIENT_ONBOARDING.md`](docs/CLIENT_ONBOARDING.md) — onboarding multi-client
+- [`docs/F2-PASTILLES-CAMPAIGN-RD4L1A1C.md`](docs/F2-PASTILLES-CAMPAIGN-RD4L1A1C.md) — campagne F2 pastilles clôturée
+
 ## Démarrage rapide
 
 **Prérequis** : Python 3.11+, [Ollama](https://ollama.com/) avec `qwen2.5-coder:14b`, données client locales non versionnées.
