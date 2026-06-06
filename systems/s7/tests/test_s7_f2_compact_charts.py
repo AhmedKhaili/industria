@@ -102,3 +102,41 @@ def test_compact_chart_regenerates_with_df(
     assert items[0].get("filtered_from_s4") is True
     assert items[0].get("png_bytes")
     assert "OPERATEUR_X" not in items[0]["included_groups"]
+
+
+def test_compact_chart_passes_factor_label_to_s4(
+    fixture_payload: dict, ctx: ClientContext, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    df = pd.DataFrame(
+        {
+            "FACTEUR_QUALI_TEST": ["GROUPE_A"] * 8 + ["GROUPE_B"] * 6,
+            "VARIABLE_QUANTI_TEST": [0.1] * 14,
+        }
+    )
+    captured: dict = {}
+
+    def _fake_build_boxplot(_df, _var, _ctx, intent, **_kw):
+        captured["intent"] = dict(intent)
+        return {"png_bytes": b"png", "error": None}
+
+    monkeypatch.setattr(
+        "systems.s4.chart_builder.build_boxplot_chart", _fake_build_boxplot
+    )
+    cfg = {"f2_compact": fixture_payload["filter_config"]["f2_compact"]}
+    selection = build_f2_compact_selection(
+        {"group_descriptive": fixture_payload["group_descriptive"]},
+        fixture_payload["intent"],
+        context=ctx,
+        cfg=cfg,
+    )
+    label = "numéro de passage de la pastille extérieure"
+    build_compact_chart_items(
+        [{"id": "b1", "title": "boxplot test", "png_bytes": None}],
+        selection,
+        fixture_payload["intent"],
+        ctx,
+        df_propre=df,
+        factor_label=label,
+    )
+    assert captured["intent"]["chart_group_label"] == label
+    assert "PAS_E_Numero_Passage" not in captured["intent"].get("chart_group_label", "")

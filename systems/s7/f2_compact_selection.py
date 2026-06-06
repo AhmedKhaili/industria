@@ -247,14 +247,27 @@ def _find_factor_config(context: Any, group_by: str) -> dict[str, Any]:
     facteurs = entites.get("facteurs_analyse") or {}
     if not isinstance(facteurs, dict):
         return {}
+    gb = str(group_by).strip()
     for op_cfg in facteurs.values():
         if not isinstance(op_cfg, dict):
             continue
-        for factor_cfg in op_cfg.values():
+        for factor_key, factor_cfg in op_cfg.items():
             if not isinstance(factor_cfg, dict):
                 continue
-            if str(factor_cfg.get("colonne", "")).strip() == group_by:
-                return factor_cfg
+            if str(factor_cfg.get("colonne", "")).strip() == gb:
+                return {**factor_cfg, "_meta_factor_key": str(factor_key)}
+            if str(factor_cfg.get("colonne_ext", "")).strip() == gb:
+                return {
+                    **factor_cfg,
+                    "_meta_factor_key": str(factor_key),
+                    "_meta_pastille_side": "ext",
+                }
+            if str(factor_cfg.get("colonne_int", "")).strip() == gb:
+                return {
+                    **factor_cfg,
+                    "_meta_factor_key": str(factor_key),
+                    "_meta_pastille_side": "int",
+                }
     return {}
 
 

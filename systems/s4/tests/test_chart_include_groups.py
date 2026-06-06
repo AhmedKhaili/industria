@@ -118,3 +118,30 @@ def test_boxplot_include_no_match_returns_error(
     assert out.get("png_bytes") is None
     assert out.get("error")
     assert "filtrage" in str(out.get("error", "")).lower()
+
+
+def test_boxplot_chart_group_label_overrides_axis_title(
+    ctx: ClientContext, boxplot_df: pd.DataFrame, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    captured: dict = {}
+
+    def _spy_to_png(fig, width, height, **_kw):
+        captured["title"] = fig.layout.title.text
+        captured["xaxis_title"] = fig.layout.xaxis.title.text
+        return b"png"
+
+    monkeypatch.setattr(chart_builder.report_charts, "_fig_to_png", _spy_to_png)
+    intent = {
+        "piece": "M2L1A1C",
+        "operation": "EQUATOR",
+        "group_by": "Ref_Matrice",
+        "variables": ["CR70_INTRADOS_FORME"],
+        "chart_group_label": "matrice de formage",
+    }
+    out = chart_builder.build_boxplot_chart(
+        boxplot_df, "CR70_INTRADOS_FORME", ctx, intent
+    )
+    assert out.get("error") is None
+    assert "matrice de formage" in captured["title"]
+    assert "Ref_Matrice" not in captured["title"]
+    assert captured["xaxis_title"] == "matrice de formage"
