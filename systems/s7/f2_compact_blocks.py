@@ -32,6 +32,10 @@ from systems.s7.f2_compact_selection import (
     F2CompactSelection,
     build_f2_compact_selection,
 )
+from systems.s7.f2_high_cardinality import (
+    apply_high_cardinality_projection,
+    exploratory_disclaimer_paragraph,
+)
 from systems.s7.f2_compact_templates import (
     business_reading_sections_compact,
     business_synthesis_lines,
@@ -91,6 +95,14 @@ def build_f2_compact_document(
 
     selection = build_f2_compact_selection(s3_output, intent, context, cfg)
     primary_block = _primary_block(s3_output, selection)
+    apply_high_cardinality_projection(
+        selection,
+        cfg,
+        df_propre=df_propre,
+        context=context,
+        intent=intent,
+        primary_block=primary_block,
+    )
     interpretation_limits = str(
         (primary_block or {}).get("interpretation_limits") or ""
     )
@@ -239,7 +251,7 @@ def _build_block_map(
     specialist_results: list[dict[str, Any]],
     primary_block: dict[str, Any] | None,
 ) -> dict[str, dict[str, Any]]:
-    rows = list(selection.rows_reliable)
+    rows = list(selection.rows_for_display)
     worst = selection.worst_reliable
     best = selection.best_reliable
     worst_group = str((worst or {}).get("group_value", ""))
@@ -259,6 +271,7 @@ def _build_block_map(
 
     compact_cfg = prep.f2_compact_config(cfg)
     max_rows = int(compact_cfg.get("max_table_rows") or 6)
+    table_rows = rows if selection.high_cardinality_active else rows[:max_rows]
 
     cover = {"meta": meta}
     synthesis = business_synthesis_lines(
@@ -270,6 +283,13 @@ def _build_block_map(
         analysis_level_label=level_label,
         analysis_level=selection.level,
     )
+    hc_note = exploratory_disclaimer_paragraph(selection, factor_label=factor_label)
+    if hc_note:
+        synthesis = dict(synthesis)
+        lines = list(synthesis.get("lines") or [])
+        lines.append(hc_note)
+        synthesis["lines"] = lines
+        synthesis["high_cardinality_note"] = hc_note
 
     conclusion = {
         "title": "Conclusion clé",
@@ -287,8 +307,10 @@ def _build_block_map(
             favorable_strength=favorable_strength,
             favorable_row=best if has_distinct_favorable else None,
         ),
-        "reliable_count": len(rows),
+        "reliable_count": len(selection.rows_reliable),
+        "displayed_count": len(rows),
         "excluded_count": len(selection.rows_excluded),
+        "high_cardinality_active": selection.high_cardinality_active,
     }
 
     verdict_block = {
@@ -340,7 +362,7 @@ def _build_block_map(
     )
 
     comparison_table = _build_group_comparison_table(
-        rows[:max_rows],
+        table_rows,
         worse_direction,
         factor_label,
         verdict_key=verdict.verdict_key,
@@ -432,15 +454,19 @@ def _build_block_map(
         ],
     }
 
+    limits_paragraphs = interpretation_limits_paragraphs_compact(
+        base_text=interpretation_limits,
+        analysis_level=selection.level,
+        factor_label=factor_label,
+        variable_label=variable_label,
+    )
+    if hc_note and hc_note not in limits_paragraphs:
+        limits_paragraphs = list(limits_paragraphs) + [hc_note]
     limits = {
         "title": "Limites d'interprétation",
-        "paragraphs": interpretation_limits_paragraphs_compact(
-            base_text=interpretation_limits,
-            analysis_level=selection.level,
-            factor_label=factor_label,
-            variable_label=variable_label,
-        ),
+        "paragraphs": limits_paragraphs,
         "source": "group_descriptive.interpretation_limits",
+        "high_cardinality_active": selection.high_cardinality_active,
     }
 
     traceability = {
@@ -450,9 +476,12 @@ def _build_block_map(
         "render_mode": "f2_compact",
         "f2_variable": selection.variable,
         "f2_source_level": selection.level,
-        "reliable_count": len(rows),
+        "reliable_count": len(selection.rows_reliable),
+        "displayed_count": len(rows),
+        "high_cardinality_active": selection.high_cardinality_active,
         "excluded_count": len(selection.rows_excluded),
         "thresholds_used": selection.thresholds_used,
+        "high_cardinality": selection.high_cardinality,
         "industria_version": meta.get("industria_version"),
         "client_mode": bool(meta.get("client_mode")),
         "fidelite_score": meta.get("fidelite_score", 0.0),

@@ -23,7 +23,6 @@ from systems.s7.tests.test_s7_f2_assembler import _minimal_png, _minimal_s4, _mi
 FIXTURE = (
     Path(__file__).resolve().parent / "fixtures" / "group_descriptive_f2_compact_filter.json"
 )
-OUTPUT_DIR = Path(__file__).resolve().parent / "output"
 GENERIC_YAML = str(
     Path(__file__).resolve().parents[3] / "configs/test_generic/client_config.yaml"
 )
@@ -280,10 +279,6 @@ def test_renderer_smoke_and_page_count(
     doc = out["document"]
     pdf = render_pdf(doc)
     assert len(pdf) > 500
-
-    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-    pdf_path = OUTPUT_DIR / "f2_compact_fixture.pdf"
-    pdf_path.write_bytes(pdf)
 
     reader = PdfReader(io.BytesIO(pdf))
     page_count = len(reader.pages)
