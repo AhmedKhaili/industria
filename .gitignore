@@ -222,6 +222,11 @@ data/lisi_capteurs.csv
 data/lisi_capteurs_export_complet_tracabilite.csv
 data/cache/
 data/chroma_db/
+
+# IndustrIA — rapports PDF générés (ne pas versionner)
+outputs/
+outputs/**/*.pdf
+rapport_industria_*.pdf
 reports/*.pdf
 reports/
 rapport_*.pdf
