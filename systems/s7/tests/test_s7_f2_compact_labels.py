@@ -14,6 +14,7 @@ from systems.s7.f2_compact_blocks import build_f2_compact_document
 from systems.s7.f2_compact_display import compact_report_title
 from systems.s7.f2_compact_labels import resolve_factor_label
 from systems.s7.f2_compact_selection import build_f2_compact_selection
+from systems.s7.f2_compact_templates import business_reading_sections_compact
 
 TRACEABILITY_YAML = str(
     Path(__file__).resolve().parents[3]
@@ -170,3 +171,76 @@ class TestPassageDocumentLabels:
         assert table is not None
         assert table.data["rows"][0]["group_value"] == "P2"
         assert table.data["rows"][0]["n"] == 21844
+
+
+class TestRetailleBusinessReadingPlural:
+    def test_exterior_plural_wording(self) -> None:
+        factor = "niveau de retaille de la pastille extérieure"
+        rows = [
+            {
+                "group_value": "-16",
+                "rank": 1,
+                "out_of_tolerance_rate": 7.0,
+                "cpk": 0.5,
+                "n": 100,
+            },
+            {
+                "group_value": "-6,5",
+                "rank": 2,
+                "out_of_tolerance_rate": 2.0,
+                "cpk": 0.8,
+                "n": 50,
+                "severity_label": "surveillance",
+            },
+            {
+                "group_value": "-1",
+                "rank": 6,
+                "out_of_tolerance_rate": 0.0,
+                "cpk": 1.5,
+                "n": 300,
+                "severity_label": "favorable",
+            },
+        ]
+        sections = business_reading_sections_compact(
+            rows,
+            worst_row=rows[0],
+            favorable_row=rows[2],
+            favorable_strength="robust",
+            worse_direction="upper",
+            analysis_level="measure",
+            factor_label=factor,
+        )
+        mid = next(s for s in sections if s["tier"] == "intermediaire")
+        body = mid["heading"] + " " + " ".join(mid["paragraphs"])
+        assert "Les niveau de retaille" not in body
+        assert "pastille extérieures" not in body
+        assert (
+            mid["heading"]
+            == "Niveaux de retaille de la pastille extérieure intermédiaires à surveiller"
+        )
+        assert "Les niveaux de retaille de la pastille extérieure" in body
+
+    def test_interior_plural_wording(self) -> None:
+        factor = "niveau de retaille de la pastille intérieure"
+        rows = [
+            {"group_value": "-5", "rank": 1, "out_of_tolerance_rate": 6.0, "cpk": 0.5, "n": 80},
+            {"group_value": "-3", "rank": 2, "out_of_tolerance_rate": 1.0, "cpk": 0.9, "n": 40},
+            {"group_value": "-0,5", "rank": 5, "out_of_tolerance_rate": 0.0, "cpk": 1.4, "n": 200},
+        ]
+        sections = business_reading_sections_compact(
+            rows,
+            worst_row=rows[0],
+            favorable_row=rows[2],
+            favorable_strength="robust",
+            worse_direction="upper",
+            analysis_level="measure",
+            factor_label=factor,
+        )
+        mid = next(s for s in sections if s["tier"] == "intermediaire")
+        body = mid["heading"] + " " + " ".join(mid["paragraphs"])
+        assert "pastille intérieures" not in body
+        assert (
+            mid["heading"]
+            == "Niveaux de retaille de la pastille intérieure intermédiaires à surveiller"
+        )
+        assert "Les niveaux de retaille de la pastille intérieure" in body
