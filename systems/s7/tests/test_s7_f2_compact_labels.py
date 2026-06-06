@@ -12,7 +12,7 @@ from systems.s1.client_context import ClientContext
 from systems.s7 import prep
 from systems.s7.f2_compact_blocks import build_f2_compact_document
 from systems.s7.f2_compact_display import compact_report_title
-from systems.s7.f2_compact_labels import resolve_factor_label
+from systems.s7.f2_compact_labels import resolve_factor_label, resolve_variable_label
 from systems.s7.f2_compact_selection import build_f2_compact_selection
 from systems.s7.f2_compact_templates import business_reading_sections_compact
 
@@ -117,16 +117,89 @@ class TestPastilleFactorLabels:
         assert label == "niveau de retaille de la pastille intérieure"
 
 
+class TestVariableSpecificLabels:
+    def test_cr1_label_not_family(self, trace_ctx: ClientContext) -> None:
+        intent = {"operation": "FILAGE", "piece": "RD4L1A1C"}
+        label = resolve_variable_label(trace_ctx, intent, "CR1")
+        assert label == "longueur de corde CR1"
+        assert "CR1 CR2 CR3" not in label
+
+    def test_cr2_cr3_specific_labels(self, trace_ctx: ClientContext) -> None:
+        intent = {"operation": "FILAGE", "piece": "RD4L1A1C"}
+        assert resolve_variable_label(trace_ctx, intent, "CR2") == "longueur de corde CR2"
+        assert resolve_variable_label(trace_ctx, intent, "CR3") == "longueur de corde CR3"
+
+    def test_long_tag_unchanged(self, trace_ctx: ClientContext) -> None:
+        intent = {"operation": "EQUATOR", "piece": "M2L1A1C"}
+        label = resolve_variable_label(trace_ctx, intent, "CR50_INTRADOS_VRILLAGE")
+        assert "CR1 CR2 CR3" not in label
+        assert "vrillage" in label.lower() or "CR50" in label
+
+    def test_cr1_title_and_variable_line(self, trace_ctx: ClientContext) -> None:
+        rows = _passage_rows()
+        block = {
+            "variable": "CR1",
+            "group_by": "PAS_E_Numero_Passage",
+            "level": "measure",
+            "rows": rows,
+            "worse_direction": "upper",
+            "worst_group": "P2",
+            "best_group": "P1",
+        }
+        intent = {
+            "variables": ["CR1"],
+            "group_by": "PAS_E_Numero_Passage",
+            "piece": "RD4L1A1C",
+            "operation": "FILAGE",
+        }
+        cfg = prep.rapport_pdf_config(trace_ctx)
+        cfg["f2_compact_enabled"] = True
+        doc = build_f2_compact_document(
+            {"group_descriptive": [block]},
+            intent,
+            context=trace_ctx,
+            cfg=cfg,
+        )
+        text = _document_text(doc)
+        assert "cr1 cr2 cr3" not in text
+        assert "longueur de corde cr1" in text
+        assert "comparaison de la longueur de corde cr1" in text
+        assert "variable analysée : cr1" in text
+        assert "(longueur de corde cr1)" in text
+
+    def test_ranking_unchanged_with_specific_label(self, trace_ctx: ClientContext) -> None:
+        rows = _passage_rows()
+        block = {
+            "variable": "CR1",
+            "group_by": "PAS_E_Numero_Passage",
+            "level": "measure",
+            "rows": rows,
+            "worse_direction": "upper",
+            "worst_group": "P2",
+            "best_group": "P1",
+        }
+        intent = {
+            "variables": ["CR1"],
+            "group_by": "PAS_E_Numero_Passage",
+            "piece": "RD4L1A1C",
+            "operation": "FILAGE",
+        }
+        cfg = prep.rapport_pdf_config(trace_ctx)
+        selection = build_f2_compact_selection(
+            {"group_descriptive": [block]}, intent, trace_ctx, cfg
+        )
+        assert selection.worst_reliable["group_value"] == "P2"
+        assert selection.rows_reliable[0]["n"] == 21844
+
+
 class TestCompactTitleGrammar:
     def test_no_du_longueur(self) -> None:
-        var = (
-            "longueur de corde de l'aube mesurée aux sections CR1 CR2 CR3 "
-            "lors du filage"
-        )
+        var = "longueur de corde CR1"
         fac = "numéro de passage de la pastille extérieure"
         title = compact_report_title(var, fac)
         assert "du longueur" not in title.lower()
         assert "de la longueur" in title.lower()
+        assert "CR1" in title
         assert fac in title
 
 
@@ -166,6 +239,8 @@ class TestPassageDocumentLabels:
         assert "pas e numero passage" not in text
         assert "pas_e_numero_passage" not in text
         assert "du longueur" not in text
+        assert "cr1 cr2 cr3" not in text
+        assert "longueur de corde cr1" in text
         assert "numéro de passage de la pastille extérieure" in text
         table = doc.find("group_comparison_table")
         assert table is not None
