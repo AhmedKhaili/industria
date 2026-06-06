@@ -163,6 +163,70 @@ class Agent4IntentBuilder:
             >= FACTEUR_LEXICAL_CERTAIN
         )
 
+    @staticmethod
+    def _pastille_side_from_question(question: str) -> str | None:
+        """
+        Détecte pastille extérieure vs intérieure dans la question.
+        Retourne 'ext', 'int', ou None si ambigu / non précisé.
+        """
+        q = Agent4IntentBuilder._strip_accents(question.lower())
+        ext_hit = bool(
+            re.search(r"\b(exterieur|exterieure)\b", q)
+            or re.search(r"\bpastille\s+ext\b", q)
+            or re.search(r"\bext\b", q)
+        )
+        int_hit = bool(
+            re.search(r"\b(interieur|interieure)\b", q)
+            or re.search(r"\bpastille\s+int\b", q)
+        )
+        if ext_hit and int_hit:
+            return None
+        if ext_hit:
+            return "ext"
+        if int_hit:
+            return "int"
+        return None
+
+    def _resolve_facteur_colonnes(
+        self,
+        fk: str,
+        scope: str | None,
+        question: str,
+        context: "ClientContext",
+    ) -> tuple[list[str], bool]:
+        """
+        Colonnes group_by pour un facteur.
+        (colonnes, pastille_cote_ambiguous) — dual colonne_ext/int sans côté précisé.
+        """
+        if fk == "machine":
+            machine = context.colonnes.get("machine", "Numero Machine")
+            return ([str(machine)] if machine else []), False
+
+        cfg = context.get_facteur_config(fk, scope)
+        if not cfg:
+            return [], False
+
+        if "colonne" in cfg:
+            col = cfg["colonne"]
+            return ([str(col)] if col else []), False
+
+        ext_col = cfg.get("colonne_ext")
+        int_col = cfg.get("colonne_int")
+        if ext_col and int_col:
+            side = self._pastille_side_from_question(question)
+            if side == "ext":
+                return [str(ext_col)], False
+            if side == "int":
+                return [str(int_col)], False
+            return [], True
+
+        cols: list[str] = []
+        if ext_col:
+            cols.append(str(ext_col))
+        if int_col:
+            cols.append(str(int_col))
+        return cols, False
+
     def _variable_group_lexical_score(
         self,
         group_key: str,
@@ -521,6 +585,7 @@ class Agent4IntentBuilder:
 
         # group_by
         group_by: str | list[str] | None = None
+        pastille_cote_ambiguous = False
 
         facteur_cols: list[str] = []
         explicit_facteurs: list[tuple[str, str, float]] = []
@@ -545,13 +610,13 @@ class Agent4IntentBuilder:
 
         if wants_group_by:
             for fk, scope, _lex_sc in explicit_facteurs:
-                col = context.facteur_colonne(fk, scope)
-                if fk == "machine":
-                    col = context.colonnes.get("machine", "Numero Machine")
-                if isinstance(col, list):
-                    facteur_cols.extend(col)
-                elif col:
-                    facteur_cols.append(col)
+                cols, ambiguous = self._resolve_facteur_colonnes(
+                    fk, scope, question, context
+                )
+                if ambiguous:
+                    pastille_cote_ambiguous = True
+                else:
+                    facteur_cols.extend(cols)
 
             if len(facteur_cols) > 1:
                 group_by = list(dict.fromkeys(facteur_cols))
@@ -629,6 +694,12 @@ class Agent4IntentBuilder:
             if not intention:
                 clarification_manque.append("intention")
             clarification_needed = bool(clarification_manque)
+
+        if pastille_cote_ambiguous:
+            if "pastille_cote" not in clarification_manque:
+                clarification_manque.append("pastille_cote")
+            clarification_needed = True
+            group_by = None
 
         ctx_session = dict(preprocessed.get("contexte_session", {}))
         if piece:
