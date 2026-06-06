@@ -228,6 +228,7 @@ data/cache/
 data/chroma_db/
 
 # IndustrIA — rapports PDF générés (ne pas versionner)
+systems/s7/tests/output/
 outputs/
 outputs/**/*.pdf
 rapport_industria_*.pdf

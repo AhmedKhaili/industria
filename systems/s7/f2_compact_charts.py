@@ -7,6 +7,7 @@ from __future__ import annotations
 from typing import Any
 
 from systems.s7.f2_compact_selection import F2CompactSelection
+from systems.s7.f2_high_cardinality import chart_group_values
 
 
 def build_compact_chart_items(
@@ -21,11 +22,7 @@ def build_compact_chart_items(
     Boxplot principal : groupes fiables uniquement si df_propre disponible.
     Sinon repasse les items avec métadonnées de filtrage attendu.
     """
-    reliable = [
-        str(r.get("group_value", ""))
-        for r in selection.rows_reliable
-        if r.get("group_value") is not None
-    ]
+    reliable = chart_group_values(selection)
     excluded = {
         str(e.group_value)
         for e in selection.rows_excluded

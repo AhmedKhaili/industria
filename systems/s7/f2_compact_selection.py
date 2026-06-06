@@ -59,10 +59,19 @@ class F2CompactSelection:
     favorable_strength: FavorableStrength = "none"
     selection_meta: dict[str, Any] = field(default_factory=dict)
     skipped_reason: str | None = None
+    high_cardinality_active: bool = False
+    rows_display: list[dict[str, Any]] = field(default_factory=list)
+    high_cardinality: dict[str, Any] = field(default_factory=dict)
 
     @property
     def degenerate(self) -> bool:
         return not self.skipped_reason and not self.rows_reliable
+
+    @property
+    def rows_for_display(self) -> list[dict[str, Any]]:
+        if self.high_cardinality_active and self.rows_display:
+            return list(self.rows_display)
+        return list(self.rows_reliable)
 
     def to_dict(self) -> dict[str, Any]:
         payload = asdict(self)
