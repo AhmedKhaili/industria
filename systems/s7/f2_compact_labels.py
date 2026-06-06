@@ -4,9 +4,16 @@ P7-F2 compact — libellés métier depuis YAML / intent (zéro paraphrase inven
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from systems.s7.f2_compact_selection import _find_factor_config
+
+_SIMPLE_CORDE_TAG = re.compile(r"^CR[123]$")
+_MULTI_CORDE_SECTIONS = re.compile(
+    r"\bCR\d+(?:\s+CR\d+)+\b",
+    re.IGNORECASE,
+)
 
 _PASTILLE_FACTOR_LABELS: dict[str, str] = {
     "passage": "numéro de passage de la pastille {cote}",
@@ -47,11 +54,47 @@ def resolve_variable_label(
                         continue
                     pattern = str(group_cfg.get("pattern_tag") or "")
                     if pattern and _tag_matches_pattern(variable, pattern):
-                        for key in ("libelle_court", "libelle", "label", "description"):
-                            val = group_cfg.get(key)
-                            if val:
-                                return str(val)
+                        group_label = _group_display_label(group_cfg)
+                        if group_label:
+                            return _variable_specific_label(variable, group_label)
     return variable
+
+
+def _group_display_label(group_cfg: dict) -> str:
+    for key in ("libelle_court", "libelle", "label", "description"):
+        val = group_cfg.get(key)
+        if val:
+            return str(val)
+    return ""
+
+
+def _variable_specific_label(variable: str, group_label: str) -> str:
+    """
+    Libellé variable individuelle à partir d'un libellé famille YAML.
+
+    Ex. CR1 + famille « … sections CR1 CR2 CR3 … » → « longueur de corde CR1 ».
+    Les tags composés (ex. CR50_INTRADOS_VRILLAGE) conservent le libellé groupe.
+    """
+    var = str(variable or "").strip()
+    label = str(group_label or "").strip()
+    if not var or not label:
+        return label or var
+
+    if "_" in var:
+        return label
+
+    if _SIMPLE_CORDE_TAG.fullmatch(var) and (
+        "CR1 CR2 CR3" in label or _MULTI_CORDE_SECTIONS.search(label)
+    ):
+        return f"longueur de corde {var}"
+
+    listed = re.findall(r"\bCR\d+\b", label, flags=re.IGNORECASE)
+    if len(listed) >= 2 and var.upper() in {t.upper() for t in listed}:
+        multi = " ".join(listed)
+        if multi in label:
+            return label.replace(multi, var)
+
+    return label
 
 
 def resolve_factor_label(
