@@ -127,7 +127,13 @@ def build_f2_compact_document(
         intent,
         context,
         df_propre=df_propre,
+        factor_label=factor_label,
     )
+    for item in chart_items:
+        if isinstance(item, dict) and factor_label and selection.variable:
+            item["title"] = (
+                f"Comparaison par {factor_label} — {selection.variable}"
+            )
     ts = timestamp or prep.utc_timestamp()
     question = question_originale or str(intent.get("question") or "")
 

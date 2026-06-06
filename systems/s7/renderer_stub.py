@@ -201,15 +201,15 @@ def _col_key(label: str) -> str:
 
 
 _F2_GROUP_COMPARISON_COL_WIDTHS = (
-    0.20,  # Groupe
+    0.18,  # Groupe
     0.11,  # n (effectifs 5–6 chiffres)
     0.10,  # Moyenne
-    0.09,  # Écart-type
-    0.11,  # % hors tol.
+    0.11,  # Écart-type (évite « Écart-ty pe »)
+    0.10,  # % hors tol.
     0.07,  # Cp
     0.07,  # Cpk
-    0.06,  # Rang
-    0.19,  # Niveau
+    0.08,  # Rang (évite « Ran g »)
+    0.18,  # Niveau
 )
 
 

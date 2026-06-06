@@ -8,6 +8,13 @@ from typing import Any
 
 from systems.s7.f2_compact_selection import _find_factor_config
 
+_PASTILLE_FACTOR_LABELS: dict[str, str] = {
+    "passage": "numéro de passage de la pastille {cote}",
+    "niveau_retaille": "niveau de retaille de la pastille {cote}",
+    "fournisseur": "fournisseur de la pastille {cote}",
+}
+_PASTILLE_COTE_LABELS = {"ext": "extérieure", "int": "intérieure"}
+
 
 def resolve_variable_label(
     context: Any,
@@ -55,6 +62,12 @@ def resolve_factor_label(
     """Libellé facteur depuis entites.facteurs_analyse ou friendly_group_label."""
     factor_cfg = _find_factor_config(context, group_by)
     if factor_cfg:
+        side = factor_cfg.get("_meta_pastille_side")
+        factor_key = str(factor_cfg.get("_meta_factor_key") or "")
+        if side in _PASTILLE_COTE_LABELS and factor_key in _PASTILLE_FACTOR_LABELS:
+            return _PASTILLE_FACTOR_LABELS[factor_key].format(
+                cote=_PASTILLE_COTE_LABELS[str(side)]
+            )
         for key in ("libelle_court", "libelle", "label", "description"):
             val = factor_cfg.get(key)
             if val:

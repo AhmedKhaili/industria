@@ -19,18 +19,46 @@ _EXCLUSION_DETAIL_CLIENT = {
 }
 
 
+_FEMININE_HEAD_NOUNS = frozenset(
+    {
+        "longueur",
+        "épaisseur",
+        "largeur",
+        "hauteur",
+        "forme",
+        "matrice",
+        "torsion",
+        "corde",
+    }
+)
+
+
+def _variable_in_comparison_phrase(variable_label: str) -> str:
+    """Article correct : « de la longueur… », « du vrillage… », « de l'épaisseur… »."""
+    var = (variable_label or "").strip()
+    if not var:
+        return ""
+    head = var.split()[0].lower().rstrip(",;:.")
+    if head in _FEMININE_HEAD_NOUNS:
+        return f"de la {var}"
+    if head and head[0] in "aeiouyéèêëàâ":
+        return f"de l'{var}"
+    return f"du {var}"
+
+
 def compact_report_title(variable_label: str, factor_label: str) -> str:
     """Titre métier page de garde (question technique conservée à part)."""
     var = (variable_label or "").strip()
     fac = (factor_label or "").strip()
     if not var:
         return "Synthèse métier comparative"
+    var_phrase = _variable_in_comparison_phrase(var)
     fac_part = fac.lower() if fac else "le facteur analysé"
     if fac and "matrice" in fac.lower():
-        return f"Comparaison du {var} selon la {fac_part}"
+        return f"Comparaison {var_phrase} selon la {fac_part}"
     if fac:
-        return f"Comparaison du {var} selon {fac_part}"
-    return f"Comparaison du {var}"
+        return f"Comparaison {var_phrase} selon {fac_part}"
+    return f"Comparaison {var_phrase}"
 
 
 def compact_verdict_allows_critique(verdict_key: str) -> bool:

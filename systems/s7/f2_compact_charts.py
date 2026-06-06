@@ -17,6 +17,7 @@ def build_compact_chart_items(
     context: Any,
     *,
     df_propre: Any = None,
+    factor_label: str = "",
 ) -> list[dict[str, Any]]:
     """
     Boxplot principal : groupes fiables uniquement si df_propre disponible.
@@ -38,6 +39,7 @@ def build_compact_chart_items(
             intent=intent,
             context=context,
             reliable_groups=reliable,
+            factor_label=factor_label,
         )
         if rebuilt is not None:
             return rebuilt
@@ -77,6 +79,7 @@ def _rebuild_boxplots(
     intent: dict,
     context: Any,
     reliable_groups: list[str],
+    factor_label: str = "",
 ) -> list[dict[str, Any]] | None:
     try:
         from systems.s4.chart_builder import build_boxplot_chart
@@ -87,6 +90,8 @@ def _rebuild_boxplots(
         return chart_items
 
     filt_intent = {**intent, "chart_include_group_values": reliable_groups}
+    if factor_label:
+        filt_intent["chart_group_label"] = factor_label
     rebuilt_chart = build_boxplot_chart(
         df_propre, variable, context, filt_intent
     )

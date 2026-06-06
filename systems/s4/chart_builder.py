@@ -307,9 +307,11 @@ def build_boxplot_chart(
 
         unit = _unit_label(context, intent, variable)
         y_title = f"{variable} ({unit})" if unit else variable
+        group_label = str(intent.get("chart_group_label") or "").strip()
+        display_group = group_label or group_col
         if group_col and group_col in plot_df.columns:
             fig = px.box(plot_df, x=group_col, y=variable, points="outliers")
-            title = f"Comparaison par {group_col} — {variable}"
+            title = f"Comparaison par {display_group} — {variable}"
         else:
             fig = px.box(plot_df, y=variable, points="outliers")
             title = f"Distribution — {variable}"
@@ -318,11 +320,14 @@ def build_boxplot_chart(
         y_span = float(plot_df[variable].max() - plot_df[variable].min()) or 1.0
         _add_tolerance_lines(fig, tol, axis="y", value_span=y_span)
         _ = specialist_results
-        fig.update_layout(
+        layout_kw: dict[str, Any] = {
             **report_charts.PLOTLY_THEME,
-            title=title,
-            yaxis_title=y_title,
-        )
+            "title": title,
+            "yaxis_title": y_title,
+        }
+        if group_col and group_col in plot_df.columns and display_group:
+            layout_kw["xaxis_title"] = display_group
+        fig.update_layout(**layout_kw)
         png = report_charts._fig_to_png(fig, 800, 400)
         groups_plotted: list[str] = []
         if group_col and group_col in plot_df.columns:
