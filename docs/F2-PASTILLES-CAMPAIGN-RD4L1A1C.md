@@ -54,9 +54,24 @@ Les runs de validation utilisent l'export traçabilité local (`data/lisi_capteu
 | Côté | Groupe prioritaire | Modalités fiables (S3) | Lignes affichées (S7) | Verdict |
 |------|-------------------|------------------------|----------------------|---------|
 | Extérieure | **-16** | 41 | 7 (top 5 + favorable + Autres) | NO-GO |
-| Intérieure | **-5** | 29 | 7 (top 5 + favorable + Autres) | NO-GO |
+| Intérieure | **-5** | 28 *(post-normalisation S2)* | 7 (top 5 + favorable + Autres) | NO-GO |
 
-Effectifs « Autres modalités » (non tronqués en PDF) : **37 301** (ext.) / **27 110** (int.).
+Effectifs « Autres modalités » (non tronqués en PDF) : **37 301** (ext.) / **26 946** (int., post-normalisation S2).
+
+#### Post-normalisation S2 (PR #15, mergée sur `main`)
+
+Diagnostic post-merge sur `PAS_I_Niveau_Retaille` / RD4L1A1C / FILAGE / CR1 — **sans régénération PDF** :
+
+| Indicateur | Avant normalisation | Après normalisation S2 |
+|------------|--------------------|------------------------|
+| Cardinalité S2 (`PAS_I_Niveau_Retaille`) | 30 | **28** |
+| Modalités fiables S3 | 29 | **28** |
+| Effectif « Autres modalités » (int.) | 27 110 | **26 946** |
+
+- Fusion confirmée : **`-1.5`** (point) → **`-1,5`** (virgule).
+- **Top 5 S3 inchangé** : **-5**, **-8**, **-1**, **-1,5**, **-3**.
+- **Groupe prioritaire** : **-5** ; **référence favorable** : **-0,5** ; high-cardinality **actif** (7 lignes affichées).
+- Retaille extérieure : cardinalité inchangée (41 modalités) sur cet export.
 
 ### Fournisseur
 
@@ -87,7 +102,7 @@ Règles figées pour cette campagne :
 |--------|--------|
 | **Causalité** | Les écarts observés sont des **associations statistiques** ; le PDF rappelle les limites d'interprétation (pas de causalité directe affirmée). |
 | **Niveau d'analyse** | Mesure brute capteur — pas d'agrégation OF / pièce contrôlée dans ces livrables. |
-| **Retaille S2** | Formats hétérogènes (`-6,5` vs `-6`) peuvent fragmenter artificiellement les groupes ; une **normalisation S2** reste une piste ultérieure, non bloquante pour cette campagne. |
+| **Retaille S2** | **Normalisation mergée (PR #15)** — formats hétérogènes (`-1.5` / `-1,5`, `-2` / `-2,0` / `-2.0`) unifiés en S2 ; impact confirmé sur retaille intérieure (30 → 28 modalités). Les PDF locaux de campagne n'ont pas été régénérés post-merge. |
 | **Rendu PDF** | Wording et tableaux jugés **suffisants pour démo pilote** ; réserves mineures non bloquantes : en-tête `% hors tol.` parfois coupé, format décimal du bandeau verdict (`Cpk 0.55` vs virgule). |
 | **Fournisseur** | Non testable tant qu'un second fournisseur n'apparaît pas sur le périmètre. |
 
@@ -105,8 +120,9 @@ Correctifs mergés pour cette campagne :
 | #10 | Effectifs remainder / largeur colonne `n` |
 | #11 | Labels métier + axe boxplot |
 | #12 | Pluralisation lecture métier retaille |
+| #15 | Normalisation affichage niveaux retaille S2 |
 
-Tests de régression au moment de la clôture : `pytest systems/s7/tests/ -q` → **138 passed**.
+Tests de régression au moment de la clôture : `pytest systems/s7/tests/ -q` → **138 passed**. Post PR #15 : S2 **44 passed**, S1 **46 passed**, S7 **138 passed**.
 
 ### PDF locaux (non versionnés)
 
@@ -132,4 +148,4 @@ Les PDF finaux sont générés **localement** dans `outputs/` (gitignored) :
 
 **Campagne F2 pastilles RD4L1A1C / FILAGE / CR1 : VALIDÉE** pour démo pilote.
 
-Prochaines pistes optionnelles (hors clôture) : normalisation retaille S2, polish cosmétique PDF, réévaluation fournisseur si l'export gagne une seconde modalité.
+Prochaines pistes optionnelles (hors clôture) : régénération locale optionnelle du PDF retaille intérieur post-normalisation, polish cosmétique PDF, réévaluation fournisseur si l'export gagne une seconde modalité.
